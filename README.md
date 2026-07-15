@@ -4,7 +4,7 @@
 
 # Skelo-Linux
 
-**Deterministic desktop automation for AI agents plugins on Linux.**
+**Deterministic desktop automation for AI agents plugin on Linux.**
 No screenshots. No pixel-guessing. The agent reads the same accessibility
 data the operating system itself uses to draw the screen — so it knows
 exactly where a button is, because it never had to guess.
@@ -121,6 +121,28 @@ does; it asks a structured question and gets a structured, exact answer.
 
 ## Install
 
+**One-line install:**
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/shirkirtia-art/Skelo-Linux/main/install.sh | bash
+```
+
+This downloads the toolkit to `~/.skelo-linux` and links it as `skelo` on
+your PATH. If `~/.local/bin` isn't already on your PATH, the installer
+tells you the exact line to add. After that:
+
+```bash
+skelo doctor      # confirms AT-SPI, wmctrl, xdotool, and pyautogui are all in place
+skelo help        # full command reference
+```
+
+The installer only fetches the runtime files (not this README, the test
+suite, or dev tooling) — see [install.sh](install.sh) if you want to read
+exactly what it does before piping it into `bash`, which is always a
+reasonable thing to want.
+
+**Manual install (clone + system deps):**
+
 ```bash
 # System dependencies (Debian/Ubuntu/Mint — Cinnamon or other X11 DEs)
 sudo apt install python3-gi gir1.2-atspi-2.0 at-spi2-core wmctrl xdotool x11-utils
@@ -141,15 +163,15 @@ chmod +x skelo.sh
 ## Quick start
 
 ```bash
-./skelo.sh windows                                   # what's open right now
-./skelo.sh open "Spotify"                             # launch an installed app
-./skelo.sh minimize --app "Chrome"                    # clear something out of the way
-./skelo.sh click --app "Spotify" --label "Pause"       # click by live label lookup
-./skelo.sh learn --app "OBS Studio"                    # map a new app once
-./skelo.sh resolve --skill skills/obs_studio.json --label "Settings" --click
+skelo windows                                   # what's open right now
+skelo open "Spotify"                             # launch an installed app
+skelo minimize --app "Chrome"                    # clear something out of the way
+skelo click --app "Spotify" --label "Pause"       # click by live label lookup
+skelo learn --app "OBS Studio"                    # map a new app once
+skelo resolve --skill skills/obs_studio.json --label "Settings" --click
 ```
 
-Run `./skelo.sh help` for the full command reference.
+Run `skelo help` for the full command reference.
 
 ---
 
@@ -166,7 +188,10 @@ Skelo-Linux/
 ├── map_app.py                # confirm identity, then map a window's controls
 ├── skelo_resolve.py          # replay a learned skill against the window's current geometry
 ├── skelo_action.py           # the executor: click/type/scroll/drag/keypress/window-ops
+├── test_window_manage.py     # mock-based tests for the window-management/verification logic
+├── test_resolve_element.py   # mock-based tests for window-vs-element query targeting
 ├── SKILL.md                  # full agent-facing documentation and workflow guide
+├── requirements.txt
 ├── LICENSE
 └── skills/                   # learned per-app profiles (generated at runtime, gitignored)
 ```
