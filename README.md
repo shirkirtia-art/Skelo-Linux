@@ -144,14 +144,8 @@ reasonable thing to want.
 **Manual install (clone + system deps):**
 
 ```bash
-# System dependencies (Debian/Ubuntu/Mint — Cinnamon or other X11 DEs)
-sudo apt install python3-gi gir1.2-atspi-2.0 at-spi2-core wmctrl xdotool x11-utils
-
-# Enable the accessibility bus (log out/in afterward so running apps pick it up)
-gsettings set org.gnome.desktop.interface toolkit-accessibility true
-
-# Python dependencies
-pip install -r requirements.txt --break-system-packages
+# Install repo
+git clone https://github.com/shirkirtia-art/Skelo-Linux.git
 
 # Make the entry point executable
 chmod +x skelo.sh
@@ -188,11 +182,7 @@ Skelo-Linux/
 ├── map_app.py                # confirm identity, then map a window's controls
 ├── skelo_resolve.py          # replay a learned skill against the window's current geometry
 ├── skelo_action.py           # the executor: click/type/scroll/drag/keypress/window-ops
-├── test_window_manage.py     # mock-based tests for the window-management/verification logic
-├── test_resolve_element.py   # mock-based tests for window-vs-element query targeting
 ├── SKILL.md                  # full agent-facing documentation and workflow guide
-├── requirements.txt
-├── LICENSE
 └── skills/                   # learned per-app profiles (generated at runtime, gitignored)
 ```
 
