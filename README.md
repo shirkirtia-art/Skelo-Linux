@@ -186,13 +186,7 @@ consequential action actually happened).
   coarser X11-only identification path (PID/`WM_CLASS`-based) — still
   usable, but flagged as lower-confidence when it's the only signal
   available.
-
----
-
-## License
-
-MIT — see [LICENSE](LICENSE).
-
+  
 ---
 
 <div align="center">
