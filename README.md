@@ -164,10 +164,7 @@ Skelo-Linux/
 ├── map_app.py                # confirm identity, then map a window's controls
 ├── skelo_resolve.py          # replay a learned skill against the window's current geometry
 ├── skelo_action.py           # the executor: click/type/scroll/drag/keypress/window-ops
-├── test_window_manage.py     # mock-based tests for the window-management/verification logic
-├── test_resolve_element.py   # mock-based tests for window-vs-element query targeting
 ├── SKILL.md                  # full agent-facing documentation and workflow guide
-├── requirements.txt
 ├── LICENSE
 └── skills/                   # learned per-app profiles (generated at runtime, gitignored)
 ```
