@@ -1,3 +1,5 @@
+![Banner](https://github.com/shirkirtia-art/Skelo-Linux/blob/eacddeef70607a804ca507fb186c1cec88f04f69/skelo.png)
+
 <div align="center">
 
 # Skelo-Linux
