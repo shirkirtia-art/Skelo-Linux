@@ -1,5 +1,3 @@
-![image alt](https://github.com/shirkirtia-art/Skelo-Linux/blob/103b1558c7ca93812b0a7d82129ee098d869fef5/skelo.jpg)
-
 <div align="center">
 
 # Skelo-Linux
