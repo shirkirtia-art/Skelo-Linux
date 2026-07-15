@@ -9,6 +9,7 @@ exactly where a button is, because it never had to guess.
 
 ![Platform](https://img.shields.io/badge/platform-Linux%20(X11%2FCinnamon)-333?logo=linux&logoColor=white)
 ![Python](https://img.shields.io/badge/python-3.10%2B-3776AB?logo=python&logoColor=white)
+![License](https://img.shields.io/badge/license-MIT-green)
 ![Vision model](https://img.shields.io/badge/vision%20model-not%20required-blueviolet)
 
 </div>
@@ -104,6 +105,11 @@ does; it asks a structured question and gets a structured, exact answer.
 - **Destructive actions are never blindly tested.** `map_app.py` skips
   Close/Exit/Quit/Delete-type controls during discovery rather than
   clicking through them.
+- **`app`/`title` target a window; only `label`/`role`/`element_id`
+  target an element.** A bare app name never triggers an unfiltered
+  element search — that's what used to make an untargeted
+  `type --app "gnome-calculator"` click whatever button AT-SPI found
+  first before typing.
 - **Runs as the desktop user automatically**, even if launched under
   `sudo`/root — AT-SPI authenticates by peer UID, so the toolkit re-execs
   itself as the logged-in user rather than silently degrading to a
@@ -159,6 +165,7 @@ Skelo-Linux/
 ├── skelo_resolve.py          # replay a learned skill against the window's current geometry
 ├── skelo_action.py           # the executor: click/type/scroll/drag/keypress/window-ops
 ├── test_window_manage.py     # mock-based tests for the window-management/verification logic
+├── test_resolve_element.py   # mock-based tests for window-vs-element query targeting
 ├── SKILL.md                  # full agent-facing documentation and workflow guide
 ├── requirements.txt
 ├── LICENSE
@@ -185,7 +192,13 @@ consequential action actually happened).
   coarser X11-only identification path (PID/`WM_CLASS`-based) — still
   usable, but flagged as lower-confidence when it's the only signal
   available.
-  
+
+---
+
+## License
+
+MIT — see [LICENSE](LICENSE).
+
 ---
 
 <div align="center">
