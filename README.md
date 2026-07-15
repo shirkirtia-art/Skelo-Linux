@@ -9,7 +9,6 @@ exactly where a button is, because it never had to guess.
 
 ![Platform](https://img.shields.io/badge/platform-Linux%20(X11%2FCinnamon)-333?logo=linux&logoColor=white)
 ![Python](https://img.shields.io/badge/python-3.10%2B-3776AB?logo=python&logoColor=white)
-![License](https://img.shields.io/badge/license-MIT-green)
 ![Vision model](https://img.shields.io/badge/vision%20model-not%20required-blueviolet)
 
 </div>
