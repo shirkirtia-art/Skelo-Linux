@@ -2,7 +2,7 @@
 
 # Skelo-Linux
 
-**Deterministic desktop automation for AI agents on Linux.**
+**Deterministic desktop automation for AI agents plugins on Linux.**
 No screenshots. No pixel-guessing. The agent reads the same accessibility
 data the operating system itself uses to draw the screen — so it knows
 exactly where a button is, because it never had to guess.
