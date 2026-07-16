@@ -27,7 +27,19 @@
 
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Resolve the real script location, following symlinks — `dirname
+# "${BASH_SOURCE[0]}"` alone does NOT follow symlinks, so running this via
+# the `skelo` symlink the installer creates in ~/.local/bin resolved
+# SCRIPT_DIR to ~/.local/bin itself (where the symlink lives) instead of
+# ~/.skelo-linux (where the actual scripts are) — that's what caused
+# "can't open file '/root/.local/bin/list_windows.py'".
+_source="${BASH_SOURCE[0]}"
+while [ -h "$_source" ]; do
+    _dir="$(cd -P "$(dirname "$_source")" && pwd)"
+    _source="$(readlink "$_source")"
+    [[ "$_source" != /* ]] && _source="$_dir/$_source"
+done
+SCRIPT_DIR="$(cd -P "$(dirname "$_source")" && pwd)"
 PY="${SKELO_PYTHON:-python3}"
 
 run_py() {
