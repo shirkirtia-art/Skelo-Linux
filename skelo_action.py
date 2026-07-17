@@ -419,6 +419,40 @@ def run_single_action(act_dict):
     elif res_info and res_info.get("status") == "success":
         return res_info
 
+    # Hard occlusion gate. If the caller named a target window (--app/
+    # --title) and it could NOT be confirmed as actually on top, sending
+    # real OS-level input now is a gamble: it goes wherever focus actually
+    # is, which may be a completely different app. click already has a
+    # safe fallback when a specific AT-SPI element was resolved (invoke it
+    # directly, bypassing screen position entirely) — but type, keypress,
+    # scroll, and drag have no such fallback, and previously didn't check
+    # this at all. This is the concrete fix for "asked to play Spotify,
+    # agent typed/clicked into Chrome instead": rather than best-effort
+    # warning after the fact, these now refuse before acting, unless the
+    # caller explicitly opts out with 'force': true / --force.
+    force = bool(act_dict.get("force", False))
+    unconfirmed = bool(res_info) and res_info.get("window_confirmed_topmost") is False
+    no_safe_fallback = {"type", "keypress", "scroll", "drag"}
+    if unconfirmed and not force and (act in no_safe_fallback or (act == "click" and not acc)):
+        target_desc = res_info.get("window_title") or res_info.get("app_name") or "the target window"
+        return {
+            "status": "error",
+            "error": (
+                f"Refusing to run '{act}': '{target_desc}' could not be confirmed as the "
+                "topmost/focused window, and this action has no coordinate-independent "
+                "fallback the way a labeled click does — sending it now risks landing on "
+                "whatever window actually has focus instead (this is the 'clicked Chrome "
+                "instead of Spotify' failure mode)."
+            ),
+            "hint": (
+                "Raise the target explicitly first (`skelo.sh raise --app \"<name>\"`), then "
+                "retry — or, for click specifically, target a specific control with --label "
+                "so it can use a safe AT-SPI action instead of a screen coordinate. If you're "
+                "certain this is safe, pass 'force': true (or --force on the CLI)."
+            ),
+            "window_confirmed_topmost": False,
+        }
+
     if act == "move":
         if "x" not in act_dict or "y" not in act_dict:
             raise ValueError("Action 'move' requires 'x' and 'y' coordinates or valid element query")
@@ -672,6 +706,10 @@ def main():
     parser.add_argument("--max-elements", type=int, default=5000, dest="max_elements", help="Max AT-SPI tree element count.")
     parser.add_argument("--no-activate", action="store_true", dest="no_activate", help="Skip window activation.")
     parser.add_argument("--confirm", action="store_true", help="Verify state change after action.")
+    parser.add_argument("--force", action="store_true",
+                         help="Bypass the topmost-window safety gate for type/keypress/scroll/drag/"
+                              "unlabeled click. Only use this if you've already confirmed the "
+                              "right window has real OS focus some other way.")
     parser.add_argument("--list-candidates", action="store_true", dest="list_candidates", help="Just list matching candidates.")
     
     # Sequence options
@@ -750,6 +788,7 @@ def main():
         "max_elements": args.max_elements,
         "no_activate": args.no_activate,
         "confirm": args.confirm,
+        "force": args.force,
         "list_candidates": args.list_candidates,
     }
     
