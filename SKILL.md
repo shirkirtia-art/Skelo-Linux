@@ -10,15 +10,16 @@ Every capability in this toolkit is reachable through one script, from any
 working directory:
 
 ```bash
-python3 skelo.sh <command> [args...]
+skelo <command> [args...]          # after the one-line install
+./skelo.sh <command> [args...]     # running from a cloned repo
 ```
 
-Use `skelo.sh`, not the individual python scripts, unless you have a
-specific reason to call one directly (e.g. reading `--json` output through
-a pipeline that expects the old flag names). It's a thin router — every
-subcommand forwards straight to the script that used to require its own
-invocation — so nothing about *what* runs changes, only how many things
-you have to remember to run it.
+Use `skelo`/`skelo.sh`, not the individual python scripts, unless you have
+a specific reason to call one directly (e.g. reading `--json` output
+through a pipeline that expects the old flag names). It's a thin router —
+every subcommand forwards straight to the script that used to require its
+own invocation — so nothing about *what* runs changes, only how many
+things you have to remember to run it.
 
 | Command | Does |
 | :--- | :--- |
@@ -78,6 +79,90 @@ idea here:
    `skelo.sh click --app .. --label ..` (live re-resolution) over reusing
    old coordinates, and use `skelo.sh resolve` when you have a learned
    profile and the window may have been resized.
+
+---
+
+## Worked example: "pause Spotify"
+
+A concrete walk-through of the playbook above, because the difference
+between "technically has the right tools" and "acts like someone who's
+actually looking at the screen" is easiest to see in a real sequence:
+
+```bash
+# 1. Look before acting — don't assume Spotify is even open, and don't
+#    assume nothing else is on top of it.
+skelo windows
+# -> shows Spotify open, but NOT the focused window (Chrome is on top)
+
+# 2. Clear the way instead of hoping the click finds it anyway.
+skelo raise --app "Spotify"
+# -> {"ok": true} only if the raise was actually verified — see below
+
+# 3. Act, targeting the specific control, not just the window.
+skelo click --app "Spotify" --label "Pause"
+
+# 4. Verify — don't assume the click landed. A window/inspect re-check
+#    (or, for a media app, checking the label flipped to "Play") confirms
+#    the actual effect rather than trusting the click's own "clicked":
+#    true, which only means the input was sent, not that it did what you
+#    expected.
+skelo inspect --app "Spotify" --interactive-only
+```
+
+Note what's deliberately *not* in that sequence: no raw `--x --y`
+coordinates typed from memory, no click fired before confirming the
+window was actually raised, and no assumption that step 3 worked without
+step 4 checking. Every step is answerable from the previous step's output
+— that's the "look, clear, act, verify" loop applied literally.
+
+## Troubleshooting
+
+**Run `skelo doctor` first, always.** It catches the large majority of
+"why isn't this working" cases directly — missing AT-SPI bindings,
+missing `wmctrl`/`xdotool`, accessibility toggled off, no `DISPLAY`. Read
+the specific line it flags rather than re-running the failing command
+hoping it resolves itself.
+
+**`AT-SPI GObject bindings not available`** — `python3-gi`/
+`gir1.2-atspi-2.0`/`at-spi2-core` aren't installed, or the accessibility
+bus isn't enabled. Fix:
+```bash
+sudo apt install python3-gi gir1.2-atspi-2.0 at-spi2-core
+gsettings set org.gnome.desktop.interface toolkit-accessibility true
+# then log out/in so already-running apps pick it up
+```
+
+**A window op (`minimize`/`maximize`/`raise`/`close`) reports `"ok":
+false` with "could not confirm it took effect"** — this is the toolkit
+being honest, not broken. It resolved a real window and sent the command,
+but couldn't verify the state actually changed (see
+[Reliability notes](#reliability-notes) below on why it verifies rather
+than trusting the command's exit code). Usually means `xdotool` isn't
+installed (`minimize` needs it for a reliable result) or the window
+manager doesn't support the requested state — `skelo doctor` will flag
+the former.
+
+**Files download fine but `skelo windows` (or any command) fails with
+`Permission denied` on a file that `ls -l` shows as perfectly readable
+(`644`, owned by you)** — this is almost never the permission bits. It's
+a POSIX ACL left on the file or inherited from a parent directory's
+default ACL, which `ls -l`/`chmod` don't reveal and don't fix. Confirm
+with `getfacl <file>` — if you see a `user:`/`group:` entry beyond the
+standard owner/group/other lines, that's it. Fix:
+```bash
+setfacl -b <file>              # clear ACLs on one file
+find ~/.skelo-linux -exec setfacl -b {} \;   # clear them across the whole install
+```
+The one-line installer now does this automatically and verifies every
+file is actually readable before reporting success — if you installed via
+`install.sh` and still hit this, something *outside* the install
+directory (a parent directory's default ACL, or an AppArmor profile) is
+the more likely cause; `dmesg | grep -iE 'denied|apparmor'` will usually
+name it directly.
+
+**Nothing seems to be running on Wayland** — AT-SPI's window-geometry
+reads and `wmctrl`/`xdotool` don't have Wayland equivalents here. Log
+into an "…on Xorg" session if your desktop environment offers one.
 
 ---
 
