@@ -23,21 +23,21 @@ things you have to remember to run it.
 
 | Command | Does |
 | :--- | :--- |
-| `skelo windows` | What's open right now |
-| `skelo apps` | What's installed |
-| `skelo open "<name>"` | Launch an installed app |
-| `skelo inspect --app "<name>"` | Dump a window's UI elements |
-| `skelo learn --app "<name>"` | check→launch→map, one call (start here for a new app) |
-| `skelo map --app "<name>"` | Map an already-open app directly |
-| `skelo resolve --skill <f> --label "<l>" --click` | Replay a learned skill |
-| `skelo click --app "<name>" --label "<l>"` | Click by live label lookup |
-| `skelo type --text "..."` | Type text |
-| `skelo key --key "ctrl+shift+t"` | Hotkey (join keys with `+`) |
-| `skelo minimize / maximize / raise / close --app "<name>"` | Manage a window directly |
-| `skelo alt-tab [--times N]` | Cycle windows |
-| `skelo doctor` | Check AT-SPI/wmctrl/xdotool/pyautogui/display health |
+| `skelo.sh windows` | What's open right now |
+| `skelo.sh apps` | What's installed |
+| `skelo.sh open "<name>"` | Launch an installed app |
+| `skelo.sh inspect --app "<name>"` | Dump a window's UI elements |
+| `skelo.sh learn --app "<name>"` | check→launch→map, one call (start here for a new app) |
+| `skelo.sh map --app "<name>"` | Map an already-open app directly |
+| `skelo.sh resolve --skill <f> --label "<l>" --click` | Replay a learned skill |
+| `skelo.sh click --app "<name>" --label "<l>"` | Click by live label lookup |
+| `skelo.sh type --text "..."` | Type text |
+| `skelo.sh key --key "ctrl+shift+t"` | Hotkey (join keys with `+`) |
+| `skelo.sh minimize / maximize / raise / close --app "<name>"` | Manage a window directly |
+| `skelo.sh alt-tab [--times N]` | Cycle windows |
+| `skelo.sh doctor` | Check AT-SPI/wmctrl/xdotool/pyautogui/display health |
 
-Run `skelo help` for the full reference, `skelo doctor` any time
+Run `skelo.sh help` for the full reference, `skelo.sh doctor` any time
 something is behaving strangely — most "why didn't that work" cases are a
 missing system dependency or accessibility being off, and `doctor` says
 exactly which.
@@ -51,6 +51,31 @@ skipped, clicks auto-avoid occluded windows) — but good judgment about
 click blindly either; they glance at what's in front of them first. Same
 idea here:
 
+0. **Determine, raise, confirm, then act — this is enforced, not
+   optional.** Whenever you pass `--app`/`--title` to
+   `click`/`type`/`key`/`scroll`/`drag`, Skelo raises that window and
+   *verifies* it actually became the real, topmost/focused window before
+   doing anything else. If it can't confirm that — meaning some other
+   window (Chrome, say) may genuinely still have focus — the action
+   **refuses outright** rather than send input that could land on the
+   wrong app. This is a hard gate, not a best-effort warning:
+   `type`/`keypress`/`scroll`/`drag`, and any `click` without a `--label`
+   to fall back on, have no safe way to proceed if the target isn't
+   confirmed on top, so they don't try:
+   ```json
+   {"status": "error", "error": "Refusing to run 'type': 'Chrome' could
+    not be confirmed as the topmost/focused window...",
+    "window_confirmed_topmost": false}
+   ```
+   The fix is always the same shape: raise the target explicitly
+   (`skelo.sh raise --app "<name>"`) and retry. A `click` *with* a
+   `--label` is the one exception — it has a genuinely safe fallback (an
+   AT-SPI direct action, which activates the control through the
+   accessibility API rather than the screen, so it can't hit the wrong
+   window no matter what's on top) and uses that automatically instead of
+   refusing. If you've independently confirmed the right window has focus
+   some other way, `--force` skips the gate — treat that as a deliberate
+   override, not a default.
 1. **Look before acting.** `skelo.sh windows` costs nothing and tells you
    what's actually open, what's focused, and what might be sitting on top
    of your target. Don't assume state from a previous turn — it may have
@@ -58,12 +83,9 @@ idea here:
 2. **Clear the way instead of hoping.** If something might be covering
    your target (another app was just focused, multiple windows are open),
    `skelo.sh minimize --app "<blocker>"` or `skelo.sh raise --app "<target>"`
-   *before* clicking is one call and removes the ambiguity entirely,
-   rather than clicking and finding out. `skelo_action.py`'s click will
-   auto-prefer a coordinate-independent click when it can't confirm the
-   target is topmost — but giving it a clear, unambiguous window to begin
-   with is still the more reliable move, and the only option for actions
-   that aren't clicks (typing needs real focus).
+   *before* acting is one call and removes the ambiguity up front, rather
+   than finding out from a refusal (point 0 above) or, worse — before that
+   gate existed — a misdirected click.
 3. **Learn once, replay cheaply.** For any app you'll interact with more
    than once in a session, `skelo.sh learn --app "<name>"` up front, then
    `skelo.sh resolve` for subsequent actions. Don't re-derive coordinates
@@ -142,6 +164,18 @@ installed (`minimize` needs it for a reliable result) or the window
 manager doesn't support the requested state — `skelo doctor` will flag
 the former.
 
+**`click`/`type`/`key`/`scroll`/`drag` returns `"Refusing to run '<action>':
+... could not be confirmed as the topmost/focused window"`** — this is
+also intentional, not a bug: it means Skelo genuinely couldn't verify your
+target window has real focus, and refused rather than guess (see
+[point 0](#how-to-act-like-someone-whos-actually-looking-at-the-screen)
+above). Run `skelo.sh raise --app "<name>"` first and retry — if the
+raise itself also fails to verify, that's the deeper thing to chase (check
+`skelo doctor`, or whether the window manager honors `_NET_ACTIVE_WINDOW`
+at all). Don't reach for `--force` as the first fix; it exists for cases
+where you've already confirmed focus some other way, not as a way to make
+the error go away.
+
 **Files download fine but `skelo windows` (or any command) fails with
 `Permission denied` on a file that `ls -l` shows as perfectly readable
 (`644`, owned by you)** — this is almost never the permission bits. It's
@@ -172,13 +206,13 @@ into an "…on Xorg" session if your desktop environment offers one.
 
 | Script | What it does | Expected Outputs |
 | :--- | :--- | :--- |
-| **[skelo_learn.py](file:///home/yser/skelo/skelo_learn.py)** | **Recommended entry point for "learn this app."** Runs check-open → launch-if-needed → raise → map as one call, so the sequence can't be partially skipped. | Same success/error JSON as `map_app.py`, plus a `steps` log of what it did. |
-| **[list_windows.py](file:///home/user/skelo/list_windows.py)** | Scans all open windows, returns application names, titles, PIDs, and geometries. | JSON containing screen resolution and active window details. |
-| **[app_launcher.py](file:///home/user/skelo/app_launcher.py)** | Scans system `.desktop` shortcuts, categorizes applications with index numbers, and launches them. | Index-mapped list or status JSON: `{"status": "success", "launched": "App", "index": 77}`. |
-| **[inspect_window.py](file:///home/user/skelo/inspect_window.py)** | Scrapes the accessible element tree of a window. | Flat JSON list of text labels, roles, bounds, and click targets. |
-| **[map_app.py](file:///home/user/skelo/map_app.py)** | Confirms the target window's identity against the live open-window list, then iterates through interactive controls, tests click events, and builds a layout skill profile. | A JSON profile (`skills/<app>.json>`) and a Markdown documentation guide (`skills/<app>.md`), or a `status: error` if the target app/window can't be unambiguously confirmed. |
-| **[skelo_resolve.py](file:///home/user/skelo/skelo_resolve.py)** | Replays a mapped skill profile, adapting coordinates dynamically to current window geometry. | Execution log verifying resolved click target and click action status. |
-| **[skelo_action.py](file:///home/user/skelo/skelo_action.py)** | **Primary Executor**: Performs inputs (clicks, double-clicks, typing, scroll, drag, keypress) by coordinates or live label resolution. | Detailed execution logs indicating movement trajectories and waypoints. |
+| **[skelo_learn.py](file:///home/ciphyrtech/skelo/skelo_learn.py)** | **Recommended entry point for "learn this app."** Runs check-open → launch-if-needed → raise → map as one call, so the sequence can't be partially skipped. | Same success/error JSON as `map_app.py`, plus a `steps` log of what it did. |
+| **[list_windows.py](file:///home/ciphyrtech/skelo/list_windows.py)** | Scans all open windows, returns application names, titles, PIDs, and geometries. | JSON containing screen resolution and active window details. |
+| **[app_launcher.py](file:///home/ciphyrtech/skelo/app_launcher.py)** | Scans system `.desktop` shortcuts, categorizes applications with index numbers, and launches them. | Index-mapped list or status JSON: `{"status": "success", "launched": "App", "index": 77}`. |
+| **[inspect_window.py](file:///home/ciphyrtech/skelo/inspect_window.py)** | Scrapes the accessible element tree of a window. | Flat JSON list of text labels, roles, bounds, and click targets. |
+| **[map_app.py](file:///home/ciphyrtech/skelo/map_app.py)** | Confirms the target window's identity against the live open-window list, then iterates through interactive controls, tests click events, and builds a layout skill profile. | A JSON profile (`skills/<app>.json>`) and a Markdown documentation guide (`skills/<app>.md`), or a `status: error` if the target app/window can't be unambiguously confirmed. |
+| **[skelo_resolve.py](file:///home/ciphyrtech/skelo/skelo_resolve.py)** | Replays a mapped skill profile, adapting coordinates dynamically to current window geometry. | Execution log verifying resolved click target and click action status. |
+| **[skelo_action.py](file:///home/ciphyrtech/skelo/skelo_action.py)** | **Primary Executor**: Performs inputs (clicks, double-clicks, typing, scroll, drag, keypress) by coordinates or live label resolution. | Detailed execution logs indicating movement trajectories and waypoints. |
 
 ### Reliability notes
 
@@ -280,6 +314,26 @@ into an "…on Xorg" session if your desktop environment offers one.
   focus first, target it explicitly — `skelo.sh click --app "<name>"
   --label "<field>"` before typing, or pass `--label` directly on the
   `type` call itself.
+* **Occlusion protection only covered labeled clicks — everything else
+  could still hit the wrong window.** The fix above (`ensure_window_topmost`
+  + auto-switch to an AT-SPI action click) only applied to `click` calls
+  that had a specific `--label` resolved. A `type`, `keypress`, `scroll`,
+  `drag`, or an unlabeled coordinate `click` never checked
+  `window_confirmed_topmost` at all — they just fired at whatever
+  genuinely had OS focus, which is exactly how "play Spotify" could still
+  land on Chrome even after the labeled-click fix: the agent's *keypress*
+  (spacebar to play/pause) or *unlabeled click* had no protection.
+  `run_single_action()` now has a single gate all actions pass through: if
+  `--app`/`--title` was given and the window couldn't be confirmed
+  topmost, `type`/`keypress`/`scroll`/`drag`/unlabeled-`click` now
+  **refuse outright** —
+  `{"status": "error", "error": "Refusing to run '<action>': ... could not
+  be confirmed as the topmost/focused window..."}` — instead of silently
+  sending input that might hit a different app. A labeled `click` still
+  uses the safe AT-SPI-action fallback instead of refusing, since that
+  option genuinely can't miss. An explicit `"force": true` / `--force`
+  bypasses the gate for a caller that has already confirmed focus some
+  other way. Covered by `test_topmost_gate.py`.
 
 ---
 
