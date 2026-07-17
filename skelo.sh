@@ -85,6 +85,13 @@ ACTING (all forward to skelo_action.py)
   sequence --file <path.json>            Same, from a file
   run <raw args>                         Escape hatch: passed straight to skelo_action.py
 
+  Safety: if you pass --app/--title to click/type/key/scroll/drag and that
+  window can't be confirmed as actually on top (something else may really
+  have focus), these REFUSE rather than risk sending input to the wrong
+  app. Fix by raising the target first (`skelo minimize`/`raise`), or
+  target a click by --label (has a safe fallback), or add --force if
+  you're certain it's safe.
+
 DIAGNOSTICS
   doctor                                 Check AT-SPI/wmctrl/xdotool/pyautogui/display health
   help                                   This message
