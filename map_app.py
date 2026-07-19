@@ -46,14 +46,32 @@ except ImportError:
 
 # Include skelo path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from skelo_common import find_window, get_bounds, resolve_label, classify_region, ROLE_TYPE_MAP, try_activate_window
+from skelo_common import (
+    find_window, get_bounds, resolve_label, classify_region, ROLE_TYPE_MAP,
+    try_activate_window, skelo_data_dir,
+)
 from list_windows import list_windows as scan_open_windows
 
-# Anchored to this script's own location, not the caller's cwd — an agent
-# invoking map_app.py from different working directories used to end up
-# with skill profiles scattered across whatever "skills/" happened to
-# resolve to relative to wherever it was standing at the time.
-_SKILLS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "skills")
+# Anchored to the real current user's home directory (via skelo_data_dir),
+# NOT to this script's own install location and NOT to the caller's cwd.
+# Two different bugs, one fix:
+#   - Anchoring to cwd used to scatter profiles across whatever "skills/"
+#     happened to resolve to relative to wherever an agent was standing.
+#   - Anchoring to the script's own directory seemed like the fix for
+#     that, but broke the moment Skelo was installed as root (common on
+#     fresh VMs) and then run as the desktop user (required for AT-SPI):
+#     the install dir was root-owned, the process writing to it wasn't
+#     root anymore, and every save silently failed with a permission
+#     error. skelo_data_dir() is anchored to whoever is *actually running
+#     this command's* real home directory, so it's always writable by
+#     the process that's about to write to it, regardless of who
+#     installed Skelo or where. Override with SKELO_DATA_DIR if needed.
+_SKILLS_DIR = skelo_data_dir("skills")
+
+# Comfortably above GTK/AT-SPI's actual sentinel (INT32_MIN, -2147483648)
+# for "not really positioned anywhere", but well below any real screen
+# coordinate a legitimate multi-monitor negative-offset layout would use.
+_INVALID_COORD_THRESHOLD = -1_000_000
 
 
 def determine_anchor(region):
@@ -110,6 +128,16 @@ class AppMapper:
 
         has_bounds = bounds and bounds["width"] > 0 and bounds["height"] > 0
 
+        # GTK/AT-SPI commonly reports a sentinel position (INT32_MIN,
+        # -2147483648) for elements that aren't currently rendered — most
+        # often menu items belonging to a menu that isn't open right now.
+        # width/height can still come back as plausible-looking non-zero
+        # values in that case (so has_bounds alone doesn't catch it), but
+        # x/y are nonsense. Flagging this at save time means a *later*
+        # skelo_resolve.py call against this profile can refuse cleanly
+        # instead of computing a garbage click target from it.
+        bounds_reliable = has_bounds and bounds["x"] > _INVALID_COORD_THRESHOLD and bounds["y"] > _INVALID_COORD_THRESHOLD
+
         if is_interactive_type and has_bounds and visible and label:
             win_x = win_bounds["x"]
             win_y = win_bounds["y"]
@@ -159,6 +187,15 @@ class AppMapper:
             }
             if label_inferred:
                 control_info["label_inferred"] = True
+            if not bounds_reliable:
+                control_info["bounds_reliable"] = False
+                control_info["bounds_note"] = (
+                    "Coordinates are placeholders, not real screen positions — "
+                    "this is a known AT-SPI limitation for elements (commonly "
+                    "menu items) that only get valid bounds while actually "
+                    "rendered/open. Open the containing menu first, then use a "
+                    "live --label lookup instead of these saved coordinates."
+                )
 
             self.controls.append(control_info)
 
@@ -425,7 +462,6 @@ def map_application(app_query, title_query=None, output=None):
     slug = app_name.lower().replace(" ", "_")
     output_path = output if output else os.path.join(_SKILLS_DIR, f"{slug}.json")
     output_path = os.path.abspath(output_path)
-    os.makedirs(os.path.dirname(output_path), exist_ok=True)
 
     # Save JSON Profile
     profile = {
@@ -437,10 +473,6 @@ def map_application(app_query, title_query=None, output=None):
         "controls": mapper.controls
     }
 
-    with open(output_path, "w") as f:
-        json.dump(profile, f, indent=2)
-
-    # Save Markdown Profile
     md_path = os.path.splitext(output_path)[0] + ".md"
     md_lines = [
         f"# Skelo App Skill Profile: {app_name.capitalize()}",
@@ -468,8 +500,34 @@ def map_application(app_query, title_query=None, output=None):
         action = c.get("action_performed", "Not tested")
         md_lines.append(f"| **{c['label']}** | `{c['type']}` | *{c['region']}* | `{c['anchor_style']}` | `+{target['x']}, +{target['y']}` | {action} |")
 
-    with open(md_path, "w") as f:
-        f.write("\n".join(md_lines) + "\n")
+    # This used to have no error handling at all: a permission mismatch
+    # (e.g. Skelo installed as root, running as the desktop user — see
+    # skelo_data_dir()'s docstring) crashed with a raw Python traceback
+    # instead of a clean, actionable JSON error, which from an agent's
+    # side just looked like "the tool silently didn't save anything."
+    try:
+        os.makedirs(os.path.dirname(output_path), exist_ok=True)
+        with open(output_path, "w") as f:
+            json.dump(profile, f, indent=2)
+        with open(md_path, "w") as f:
+            f.write("\n".join(md_lines) + "\n")
+    except OSError as e:
+        return {
+            "status": "error",
+            "error": f"Mapped {len(mapper.controls)} controls successfully, but "
+                     f"failed to save the profile: {e}",
+            "hint": (
+                "This is almost always a permission mismatch between where Skelo "
+                "is installed and who actually ran this command — common if "
+                "Skelo was installed as root but runs as the desktop user (AT-SPI "
+                "requires that). Check write access to "
+                f"{os.path.dirname(output_path)}, set the SKELO_DATA_DIR "
+                "environment variable to a directory you know is writable, or "
+                "pass --output explicitly to this call."
+            ),
+            "controls_learned": len(mapper.controls),
+            "attempted_path": output_path,
+        }
 
     result = {
         "status": "success",
@@ -481,6 +539,31 @@ def map_application(app_query, title_query=None, output=None):
     }
     if caveat:
         result["identification_caveat"] = caveat
+    if len(mapper.controls) == 0:
+        # A confirmed, correctly-identified window with zero interactive
+        # controls almost never means Skelo failed to find controls that
+        # are there — it means the app doesn't expose its UI via AT-SPI at
+        # all. Saying so explicitly here matters: without it, the natural
+        # next move is to retry (won't help, nothing changed) or to try
+        # forcing the app's accessibility support on by relaunching it
+        # with special flags — which requires killing whatever's currently
+        # running first, risking exactly the kind of "accidentally killed
+        # the user's active session" outcome Skelo should never cause on
+        # its own initiative. That's a deliberate, human-approved action,
+        # not something to automate here.
+        result["zero_controls_warning"] = (
+            "No interactive controls were found. This usually means the app "
+            "doesn't expose its UI via AT-SPI at all, not that Skelo failed to "
+            "find controls that are there. Common causes: Electron apps "
+            "(Spotify, VS Code, Discord, Slack) disable accessibility by "
+            "default; browser windows (Chrome/Chromium) only expose the window "
+            "frame via AT-SPI, never the web page's DOM content inside it. "
+            "Re-mapping this app again won't produce a different result without "
+            "changing the app's own accessibility configuration first, which "
+            "Skelo won't do automatically since it would require closing the "
+            "app's current window/process. See SKILL.md's 'Apps that AT-SPI "
+            "can't see into' section for what to do instead."
+        )
     return result
 
 
