@@ -78,9 +78,61 @@ def _ensure_desktop_user():
         # legacy (less reliable) bus-path guess below rather than crash.
         return
 
+    # Preflight: can we actually do this without a password? If not,
+    # os.execvpe below would replace this whole process with `sudo`,
+    # which then either blocks on a password prompt with no TTY to answer
+    # it (most agent/non-interactive contexts), or fails immediately —
+    # either way, from the caller's side that looks exactly like "the
+    # tool is demanding root access", when what actually happened is a
+    # silent, un-diagnosable stall. Checking this up front turns that into
+    # one clear message and a graceful continue-as-root instead.
     try:
+        preflight = subprocess.run(
+            ["sudo", "-n", "-u", target_user, "true"],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=3,
+        )
+        if preflight.returncode != 0:
+            sys.stderr.write(
+                f"[skelo] Running as root, and 'sudo -u {target_user}' needs a "
+                f"password, so not attempting it (would hang waiting on a prompt "
+                f"in a non-interactive context). Continuing as root instead, "
+                f"which degrades AT-SPI window identification accuracy — see "
+                f"SKILL.md's Troubleshooting section.\n"
+                f"[skelo] Fix: run Skelo as '{target_user}' directly instead of "
+                f"root (recommended), or allow this one command passwordlessly:\n"
+                f"    echo 'root ALL=({target_user}) NOPASSWD: "
+                f"{sys.executable}' | sudo tee /etc/sudoers.d/skelo-desktop-user\n"
+            )
+            return
+    except Exception:
+        # Couldn't even run the check (no `sudo` binary, etc.) — fall
+        # through and continue as root rather than risk hanging.
+        return
+
+    try:
+        # Build a *correct* environment for the target user instead of
+        # blindly inheriting root's wholesale. `-E` tells sudo to preserve
+        # exactly the environment it was started with (the `env` dict
+        # below) rather than resetting to sudoers' defaults — which is
+        # what we want for DISPLAY/XAUTHORITY/XDG_RUNTIME_DIR (these
+        # describe the running X/AT-SPI session and are still correct
+        # coming from root's env). But naively preserving root's env also
+        # meant HOME/USER/LOGNAME stayed "root"/"/root" even though the
+        # process now runs with the target user's uid — so anything
+        # trusting $HOME afterward (or os.path.expanduser('~')) silently
+        # resolved to root's home directory while running as someone
+        # else. That's precisely how a learned skill profile could look
+        # like it saved successfully while landing somewhere the real
+        # desktop user's session could never see or write to again.
+        # Overriding these three explicitly, while keeping -E for
+        # everything else, fixes that without breaking X11/AT-SPI access.
+        import pwd
+        target_pw = pwd.getpwnam(target_user)
         env = os.environ.copy()
         env["SKELO_REEXEC_DONE"] = "1"
+        env["HOME"] = target_pw.pw_dir
+        env["USER"] = target_user
+        env["LOGNAME"] = target_user
         os.execvpe("sudo", ["sudo", "-u", target_user, "-E", "--", sys.executable] + sys.argv, env)
     except Exception:
         pass  # if re-exec isn't possible here, continue as root
@@ -731,8 +783,54 @@ def get_screen_resolution():
     return None
 
 
+def get_real_home(user=None):
+    """Home directory for a given username (or the current effective user
+    if none given), read from the passwd database — not the $HOME
+    environment variable. $HOME can't be trusted here: a process re-exec'd
+    from root to the desktop user (see _ensure_desktop_user) historically
+    kept root's HOME even after the uid changed, and in general, trusting
+    environment state that some other wrapper/caller set is less reliable
+    than just asking the OS which uid we actually are."""
+    import pwd
+    try:
+        if user:
+            return pwd.getpwnam(user).pw_dir
+        return pwd.getpwuid(os.getuid()).pw_dir
+    except Exception:
+        return os.environ.get("HOME") or os.path.expanduser("~")
+
+
+def skelo_data_dir(subdir=None):
+    """Where Skelo writes generated, per-machine data (learned skill
+    profiles, etc.) — deliberately anchored to the real home directory of
+    whoever is actually running the code right now, NOT to wherever the
+    code itself is installed.
+
+    Why this distinction matters: Skelo is commonly installed while root
+    (the default shell on a lot of fresh VMs/containers), so the install
+    directory ends up owned by root. But AT-SPI requires the process to
+    actually run as the desktop user (see _ensure_desktop_user), not root.
+    Anchoring writable output to the install directory meant a learned
+    skill profile could "successfully" run, and then fail to save with a
+    permission error the moment those two users differed — which is
+    exactly what happened in practice. Using the real current user's home
+    instead means saving always lands somewhere that user can actually
+    write to and find again, regardless of who installed Skelo or where.
+
+    Override with the SKELO_DATA_DIR environment variable if you want
+    output somewhere specific.
+    """
+    base = os.environ.get("SKELO_DATA_DIR") or os.path.join(get_real_home(), ".local", "share", "skelo-linux")
+    path = os.path.join(base, subdir) if subdir else base
+    try:
+        os.makedirs(path, exist_ok=True)
+    except Exception:
+        pass  # let the caller's own write attempt surface a precise error
+    return path
+
+
 # --------------------------------------------------------------------------
-# Human-like cursor motion (shared by skelo_action.py and skelo_action.py)
+# Human-like cursor motion (shared by skelo_action.py and skelo_resolve.py)
 # --------------------------------------------------------------------------
 
 def ease_in_out_cubic(t):
