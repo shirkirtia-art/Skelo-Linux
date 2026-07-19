@@ -125,6 +125,37 @@ def main():
     exact_matches = [c for c in matched_controls if c["label"].lower() == args.label.lower()]
     target_control = exact_matches[0] if exact_matches else matched_controls[0]
 
+    # Catches two cases: profiles saved by a version of map_app.py new
+    # enough to flag this explicitly (bounds_reliable: False), and older
+    # profiles that predate the flag but still carry the raw AT-SPI
+    # sentinel value directly in absolute_bounds. Either way, resolving
+    # "coordinates" from this would silently compute a nonsense click
+    # target and fail confusingly deep inside skelo_action.py rather than
+    # here, with a clear reason, before any math happens on garbage input.
+    _bounds = target_control.get("absolute_bounds") or {}
+    _sentinel = target_control.get("bounds_reliable") is False or any(
+        _bounds.get(k, 0) <= -1_000_000 for k in ("x", "y")
+    )
+    if _sentinel:
+        print(json.dumps({
+            "status": "error",
+            "error": (
+                f"Control '{target_control['label']}' has no reliable screen "
+                "position to resolve. This is a known AT-SPI limitation — "
+                "commonly a menu item that only gets valid coordinates while "
+                "its containing menu is actually open, not while it's saved "
+                "in a learned profile."
+            ),
+            "hint": (
+                "Open the containing menu first (e.g. click the parent menu "
+                "button), then interact with this control while it's actually "
+                "visible — skelo_action.py's live --label lookup re-resolves "
+                "against the current tree and doesn't have this problem, unlike "
+                "a saved skill profile's coordinates."
+            ),
+        }))
+        sys.exit(1)
+
     cur_bounds = find_live_window_bounds(app_name)
     if not cur_bounds:
         print(json.dumps({
