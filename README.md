@@ -123,8 +123,7 @@ does; it asks a structured question and gets a structured, exact answer.
 
 ## Demo below 2x 👇
 
-<video src="https://dms.licdn.com/playlist/vid/v2/D4D05AQGeTdKZKQF1IA/mp4-720p-30fp-crf28/B4DZ9uZv6DGkB8-/0/1784263674763?e=1785034800&v=beta&t=SO1ATc43KPfbSOdvjLpwcJBeQIH36Z-UUdvU9cr5sFk" controls="controls" muted="muted" style="max-width: 100%; height: auto;">
-</video>
+[Watch the video](https://dms.licdn.com/playlist/vid/v2/D4D05AQGeTdKZKQF1IA/mp4-720p-30fp-crf28/B4DZ9uZv6DGkB8-/0/1784263674763?e=1785034800&v=beta&t=SO1ATc43KPfbSOdvjLpwcJBeQIH36Z-UUdvU9cr5sFk)
 
 ---
 
