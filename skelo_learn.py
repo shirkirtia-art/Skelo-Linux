@@ -38,6 +38,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from list_windows import list_windows
 from app_launcher import get_apps_categorized, launch_app_by_style
 from map_app import map_application
+from skelo_common import window_manage
 
 
 def find_open(app_query, title_query=None):
@@ -71,7 +72,7 @@ def launch_target(app_query):
     return (candidates[0] if ok else None), err
 
 
-def run(app_query, title_query=None, skip_launch=False, launch_wait=4.0, output=None):
+def run(app_query, title_query=None, skip_launch=False, launch_wait=4.0, output=None, test_actions=False):
     steps = []
 
     matches = find_open(app_query, title_query)
@@ -90,9 +91,15 @@ def run(app_query, title_query=None, skip_launch=False, launch_wait=4.0, output=
         if launched is None:
             return {"status": "error", "error": err, "steps": steps}
 
-        time.sleep(launch_wait)
-        matches = find_open(app_query, title_query)
-        steps.append({"step": "recheck_open", "matches_found": len(matches)})
+        # Smart polling loop: check every 0.25s up to launch_wait
+        poll_start = time.time()
+        while time.time() - poll_start < launch_wait:
+            time.sleep(0.25)
+            matches = find_open(app_query, title_query)
+            if matches:
+                break
+
+        steps.append({"step": "recheck_open", "matches_found": len(matches), "elapsed_seconds": round(time.time() - poll_start, 2)})
 
         if not matches:
             return {
@@ -105,22 +112,13 @@ def run(app_query, title_query=None, skip_launch=False, launch_wait=4.0, output=
                 "steps": steps,
             }
 
-    # Best-effort raise/focus of the target before mapping. This is not a
-    # substitute for map_application()'s own identity confirmation — it's
-    # just trying to get the right window on top so test-clicks land where
-    # expected.
+    # Verified raise/focus of the target before mapping
     target = matches[0]
-    try:
-        subprocess.run(
-            ["wmctrl", "-a", target.get("window_title") or target.get("app_name") or app_query],
-            timeout=2, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-        )
-    except Exception:
-        pass
+    ok, _ = window_manage(target.get("app_name") or app_query, "raise", title_query=target.get("window_title"))
     steps.append({"step": "raise_window", "target_app": target.get("app_name"),
-                  "target_title": target.get("window_title")})
+                  "target_title": target.get("window_title"), "verified": ok})
 
-    result = map_application(app_query, title_query, output)
+    result = map_application(app_query, title_query, output, test_actions=test_actions)
     result["steps"] = steps
     return result
 
@@ -136,9 +134,11 @@ def main():
     parser.add_argument("--launch-wait", type=float, default=4.0, dest="launch_wait",
                          help="Seconds to wait after launching before re-checking for a window.")
     parser.add_argument("--output", default=None, help="Custom output JSON path for the skill profile.")
+    parser.add_argument("--test-actions", action="store_true",
+                         help="Actively test-click buttons to detect dialogs/menus (off by default for safety).")
     args = parser.parse_args()
 
-    result = run(args.app, args.title, args.skip_launch, args.launch_wait, args.output)
+    result = run(args.app, args.title, args.skip_launch, args.launch_wait, args.output, test_actions=args.test_actions)
     print(json.dumps(result, indent=2))
     sys.exit(0 if result.get("status") == "success" else 1)
 

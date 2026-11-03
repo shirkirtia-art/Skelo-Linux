@@ -151,6 +151,14 @@ case ":$PATH:" in
     ;;
 esac
 
+if [ "${1:-}" = "--deps" ] || [ "${SKELO_INSTALL_DEPS:-}" = "1" ]; then
+  if command -v apt-get >/dev/null 2>&1; then
+    info "Installing system dependencies via apt..."
+    sudo apt-get update -qq && sudo apt-get install -y -qq wmctrl xdotool x11-utils python3-gi gir1.2-atspi-2.0 at-spi2-core xclip python3-pip
+    pip3 install --break-system-packages pyautogui 2>/dev/null || pip install pyautogui 2>/dev/null || true
+  fi
+fi
+
 echo
 info "Next steps:"
 echo "    skelo doctor      # check AT-SPI/wmctrl/xdotool/pyautogui are all in place"

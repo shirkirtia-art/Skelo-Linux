@@ -50,7 +50,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from skelo_common import (
     ATSPI_AVAILABLE, atspi_unavailable_error,
     TOP_LEVEL_ROLES, get_bounds, is_state, get_screen_resolution,
-    bounds_contained, dedupe, filter_nested_subframes,
+    bounds_contained, dedupe, filter_nested_subframes, skelo_data_dir,
+    INVALID_COORD_THRESHOLD,
 )
 
 if ATSPI_AVAILABLE:
@@ -149,6 +150,33 @@ def collect_raw_windows(retries=2, retry_delay=0.35):
     return [], last_err
 
 
+def _clean_x11_app_name(raw_name):
+    """Normalize common X11 app class names to human-readable names."""
+    if not raw_name:
+        return "unknown"
+    low = raw_name.lower().replace("-", " ").replace("_", " ").strip()
+    known = {
+        "google chrome": "Google Chrome",
+        "chrome": "Google Chrome",
+        "brave browser": "Brave Browser",
+        "brave": "Brave Browser",
+        "spotify": "Spotify",
+        "nemo": "nemo",
+        "vscodium": "VSCodium",
+        "codium": "VSCodium",
+        "code": "VS Code",
+        "firefox": "Firefox",
+        "thunderbird": "Thunderbird",
+        "gnome terminal": "Terminal",
+        "xed": "Text Editor",
+    }
+    for k, v in known.items():
+        if low == k or low.startswith(k + " "):
+            return v
+    # Capitalize nicely if not found
+    return " ".join(w.capitalize() for w in low.split())
+
+
 def get_x11_windows():
     """Gets all graphical windows currently open on X11 via wmctrl and xwininfo."""
     windows = []
@@ -156,20 +184,20 @@ def get_x11_windows():
         env = os.environ.copy()
         if "DISPLAY" not in env:
             env["DISPLAY"] = ":0"
-            
+
         res = subprocess.run(["wmctrl", "-l", "-p"], capture_output=True, text=True, env=env, timeout=3)
         if res.returncode != 0:
             return []
-            
+
         for line in res.stdout.strip().split("\n"):
             parts = line.split(None, 4)
-            if len(parts) < 5:
+            if len(parts) < 4:
                 continue
-            win_id, workspace, pid_str, machine, title = parts
-            pid = int(pid_str)
-            if pid == 0:
-                continue
-                
+            win_id = parts[0]
+            pid_str = parts[2]
+            title = parts[4] if len(parts) > 4 else ""
+            pid = int(pid_str) if pid_str.isdigit() else 0
+
             # Get geometry from xwininfo
             try:
                 x_res = subprocess.run(["xwininfo", "-id", win_id], capture_output=True, text=True, env=env, timeout=2)
@@ -189,29 +217,33 @@ def get_x11_windows():
                     elif wl.startswith("Height:"):
                         h = int(wl.split(":")[-1].strip())
                 if x is not None and y is not None and w is not None and h is not None:
-                    bounds = {"x": x, "y": y, "width": w, "height": h}
-                    
-            # Get app name
+                    if x > INVALID_COORD_THRESHOLD and y > INVALID_COORD_THRESHOLD:
+                        bounds = {"x": x, "y": y, "width": w, "height": h}
+
+            # Prioritize WM_CLASS from X11 (canonical window class set by app)
+            # This avoids misidentifying Flatpak / PID namespace apps as host kernel threads like kthreadd.
             app_name = "unknown"
+            raw_comm_name = None
             try:
-                with open(f"/proc/{pid}/comm", "r") as f:
-                    app_name = f.read().strip()
+                c_res = subprocess.run(["xprop", "-id", win_id, "WM_CLASS"], capture_output=True, text=True, env=env, timeout=2)
+                if c_res.returncode == 0 and "=" in c_res.stdout:
+                    classes = [p.strip('" \n') for p in c_res.stdout.split("=", 1)[-1].split(",") if p.strip('" \n')]
+                    if len(classes) > 1:
+                        app_name = _clean_x11_app_name(classes[1])
+                    elif classes:
+                        app_name = _clean_x11_app_name(classes[0])
             except Exception:
+                pass
+
+            # Fallback to /proc/<pid>/comm only if WM_CLASS failed and pid is not a kernel/system daemon (pid > 100)
+            if app_name == "unknown" and pid > 100:
                 try:
-                    c_res = subprocess.run(["xprop", "-id", win_id, "WM_CLASS"], capture_output=True, text=True, env=env, timeout=2)
-                except subprocess.TimeoutExpired:
-                    c_res = None
-                if c_res is not None and c_res.returncode == 0 and "=" in c_res.stdout:
-                    app_name = c_res.stdout.split("=")[-1].split(",")[0].strip('" \n')
-                    
-            raw_comm_name = app_name
-            if app_name.lower() == "spotify":
-                app_name = "Spotify"
-            elif app_name.lower() == "chrome" or "chrome" in app_name.lower():
-                app_name = "Google Chrome"
-            elif app_name.lower() == "nemo":
-                app_name = "nemo"
-                
+                    with open(f"/proc/{pid}/comm", "r") as f:
+                        raw_comm_name = f.read().strip()
+                        app_name = _clean_x11_app_name(raw_comm_name)
+                except Exception:
+                    pass
+
             windows.append({
                 "app_name": app_name,
                 "process_id": pid,
@@ -219,36 +251,28 @@ def get_x11_windows():
                 "role": "frame",
                 "is_focused": False,
                 "bounds": bounds,
-                # Lower confidence than an AT-SPI-sourced entry: this app_name
-                # came from /proc/<pid>/comm or WM_CLASS plus a hardcoded
-                # name-guess table, not from the app's own accessibility
-                # metadata. That heuristic is what previously misidentified
-                # Spotify's CEF wrapper process as "Chromium" playing an
-                # unrelated video. Kept here (rather than dropped) since for
-                # many apps it's still the only signal available, but
-                # callers doing identity-sensitive matching (e.g.
-                # map_app.py's confirm_target_window) should treat it with
-                # more scrutiny than an "atspi"-sourced entry.
                 "source": "x11_fallback",
-                "raw_comm_name": raw_comm_name,
+                "raw_comm_name": raw_comm_name or app_name,
             })
     except Exception:
         pass
     return windows
 
 
-CACHE_FILE = "/tmp/.skelo_list_windows_cache.json"
+def _get_cache_file():
+    return os.path.join(skelo_data_dir(), "cache_list_windows.json")
 
 
 def _read_cache(ttl, include_all):
     if ttl <= 0:
         return None
+    cache_path = _get_cache_file()
     try:
-        st = os.stat(CACHE_FILE)
+        st = os.stat(cache_path)
         age = time.time() - st.st_mtime
         if age > ttl:
             return None
-        with open(CACHE_FILE, "r") as f:
+        with open(cache_path, "r") as f:
             data = json.load(f)
         if data.get("_include_all") != include_all:
             return None
@@ -261,13 +285,29 @@ def _read_cache(ttl, include_all):
 
 
 def _write_cache(result, include_all):
+    cache_path = _get_cache_file()
     try:
         payload = dict(result)
         payload["_include_all"] = include_all
-        with open(CACHE_FILE, "w") as f:
+        with open(cache_path, "w") as f:
             json.dump(payload, f)
     except Exception:
         pass
+
+
+def _window_matches(w1, w2):
+    """Check if two window records represent the same window (e.g. from AT-SPI and X11)."""
+    p1, p2 = w1.get("process_id"), w2.get("process_id")
+    if p1 and p2 and p1 == p2:
+        return True
+    t1 = (w1.get("window_title") or "").strip()
+    t2 = (w2.get("window_title") or "").strip()
+    if t1 and t2 and t1.lower() == t2.lower():
+        return True
+    b1, b2 = w1.get("bounds"), w2.get("bounds")
+    if b1 and b2 and b1 == b2:
+        return True
+    return False
 
 
 def list_windows(include_all=False):
@@ -282,12 +322,12 @@ def list_windows(include_all=False):
     if not include_all:
         windows = filter_nested_subframes(windows)
 
-    # Merge X11 windows (such as Spotify or other apps without accessibility tree)
+    # Merge X11 windows (such as apps without accessibility tree)
     x11_windows = get_x11_windows()
-    seen_pids = {w["process_id"] for w in windows if w.get("process_id") is not None}
-    
+
     for xw in x11_windows:
-        if xw["process_id"] not in seen_pids:
+        # Check if already present in AT-SPI windows by pid, title, or bounds
+        if not any(_window_matches(w, xw) for w in windows):
             windows.append({
                 "app_name": xw["app_name"],
                 "process_id": xw["process_id"],
@@ -298,7 +338,6 @@ def list_windows(include_all=False):
                 "source": xw.get("source", "x11_fallback"),
                 "raw_comm_name": xw.get("raw_comm_name"),
             })
-            seen_pids.add(xw["process_id"])
 
     return windows, warning
 

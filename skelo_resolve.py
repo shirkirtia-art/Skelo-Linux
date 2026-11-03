@@ -29,7 +29,7 @@ import subprocess
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from skelo_common import ATSPI_AVAILABLE, atspi_unavailable_error, find_window, get_bounds
+from skelo_common import ATSPI_AVAILABLE, atspi_unavailable_error, find_window, get_bounds, skelo_data_dir, direct_action_click
 
 if not ATSPI_AVAILABLE:
     print(json.dumps(atspi_unavailable_error()))
@@ -98,12 +98,27 @@ def main():
                               "'action' invokes the element's AT-SPI action directly (needs --confirm-live-lookup).")
     args = parser.parse_args()
 
-    if not os.path.exists(args.skill):
+    skill_path = args.skill
+    if not os.path.exists(skill_path):
+        candidates = [
+            os.path.join(skelo_data_dir("skills"), skill_path),
+            os.path.join(skelo_data_dir("skills"), skill_path + ".json"),
+            os.path.join(os.path.dirname(os.path.abspath(__file__)), "skills", skill_path),
+            os.path.join(os.path.dirname(os.path.abspath(__file__)), "skills", skill_path + ".json"),
+            os.path.join(os.path.expanduser("~"), ".local", "share", "skelo-linux", "skills", skill_path),
+            os.path.join(os.path.expanduser("~"), ".local", "share", "skelo-linux", "skills", skill_path + ".json"),
+        ]
+        for c in candidates:
+            if os.path.exists(c):
+                skill_path = c
+                break
+
+    if not os.path.exists(skill_path):
         print(json.dumps({"status": "error", "error": f"Skill profile file '{args.skill}' not found."}))
         sys.exit(1)
 
     try:
-        with open(args.skill, "r") as f:
+        with open(skill_path, "r") as f:
             profile = json.load(f)
     except Exception as e:
         print(json.dumps({"status": "error", "error": f"Failed to load JSON profile: {e}"}))
@@ -125,13 +140,6 @@ def main():
     exact_matches = [c for c in matched_controls if c["label"].lower() == args.label.lower()]
     target_control = exact_matches[0] if exact_matches else matched_controls[0]
 
-    # Catches two cases: profiles saved by a version of map_app.py new
-    # enough to flag this explicitly (bounds_reliable: False), and older
-    # profiles that predate the flag but still carry the raw AT-SPI
-    # sentinel value directly in absolute_bounds. Either way, resolving
-    # "coordinates" from this would silently compute a nonsense click
-    # target and fail confusingly deep inside skelo_action.py rather than
-    # here, with a clear reason, before any math happens on garbage input.
     _bounds = target_control.get("absolute_bounds") or {}
     _sentinel = target_control.get("bounds_reliable") is False or any(
         _bounds.get(k, 0) <= -1_000_000 for k in ("x", "y")
@@ -174,14 +182,10 @@ def main():
         "learned_window_bounds": ref_bounds,
         "current_window_bounds": cur_bounds,
         "resolved_click_target": resolved,
+        "skill_profile_used": skill_path,
     }
 
     if args.click:
-        # BUG FIX: this used to pass --confirm to skelo_action.py, which has
-        # no such flag — every click silently failed with an argparse error
-        # that was swallowed into click_action.error. skelo_action.py is
-        # coordinate-only and has no AT-SPI element to "confirm" against
-        # anyway, so we just call it plainly and report its own status.
         script_dir = os.path.dirname(os.path.abspath(__file__))
         action_script = os.path.join(script_dir, "skelo_action.py")
 
@@ -190,6 +194,7 @@ def main():
             "--action", "click",
             "--x", str(resolved["x"]),
             "--y", str(resolved["y"]),
+            "--method", args.method,
         ]
 
         try:

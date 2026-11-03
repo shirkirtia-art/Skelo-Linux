@@ -206,13 +206,13 @@ into an "…on Xorg" session if your desktop environment offers one.
 
 | Script | What it does | Expected Outputs |
 | :--- | :--- | :--- |
-| **[skelo_learn.py](file:///home/ciphyrtech/skelo/skelo_learn.py)** | **Recommended entry point for "learn this app."** Runs check-open → launch-if-needed → raise → map as one call, so the sequence can't be partially skipped. | Same success/error JSON as `map_app.py`, plus a `steps` log of what it did. |
-| **[list_windows.py](file:///home/ciphyrtech/skelo/list_windows.py)** | Scans all open windows, returns application names, titles, PIDs, and geometries. | JSON containing screen resolution and active window details. |
-| **[app_launcher.py](file:///home/ciphyrtech/skelo/app_launcher.py)** | Scans system `.desktop` shortcuts, categorizes applications with index numbers, and launches them. | Index-mapped list or status JSON: `{"status": "success", "launched": "App", "index": 77}`. |
-| **[inspect_window.py](file:///home/ciphyrtech/skelo/inspect_window.py)** | Scrapes the accessible element tree of a window. | Flat JSON list of text labels, roles, bounds, and click targets. |
-| **[map_app.py](file:///home/ciphyrtech/skelo/map_app.py)** | Confirms the target window's identity against the live open-window list, then iterates through interactive controls, tests click events, and builds a layout skill profile. | A JSON profile (`skills/<app>.json>`) and a Markdown documentation guide (`skills/<app>.md`), or a `status: error` if the target app/window can't be unambiguously confirmed. |
-| **[skelo_resolve.py](file:///home/ciphyrtech/skelo/skelo_resolve.py)** | Replays a mapped skill profile, adapting coordinates dynamically to current window geometry. | Execution log verifying resolved click target and click action status. |
-| **[skelo_action.py](file:///home/ciphyrtech/skelo/skelo_action.py)** | **Primary Executor**: Performs inputs (clicks, double-clicks, typing, scroll, drag, keypress) by coordinates or live label resolution. | Detailed execution logs indicating movement trajectories and waypoints. |
+| **[skelo_learn.py](skelo_learn.py)** | **Recommended entry point for "learn this app."** Runs check-open → launch-if-needed → raise → map as one call, so the sequence can't be partially skipped. | Same success/error JSON as `map_app.py`, plus a `steps` log of what it did. |
+| **[list_windows.py](list_windows.py)** | Scans all open windows, returns application names, titles, PIDs, and geometries. | JSON containing screen resolution and active window details. |
+| **[app_launcher.py](app_launcher.py)** | Scans system `.desktop` shortcuts, categorizes applications with index numbers, and launches them. | Index-mapped list or status JSON: `{"status": "success", "launched": "App", "index": 77}`. |
+| **[inspect_window.py](inspect_window.py)** | Scrapes the accessible element tree of a window. | Flat JSON list of text labels, roles, bounds, and click targets. |
+| **[map_app.py](map_app.py)** | Confirms the target window's identity against the live open-window list, then maps layout and interactive controls into a reusable skill profile. | A JSON profile (`skills/<app>.json`) and a Markdown documentation guide (`skills/<app>.md`), or a `status: error` if the target app/window can't be unambiguously confirmed. |
+| **[skelo_resolve.py](skelo_resolve.py)** | Replays a mapped skill profile, adapting coordinates dynamically to current window geometry. | Execution log verifying resolved click target and click action status. |
+| **[skelo_action.py](skelo_action.py)** | **Primary Executor**: Performs inputs (clicks, double-clicks, typing, scroll, drag, keypress) by coordinates or live label resolution. | Detailed execution logs indicating movement trajectories and waypoints. |
 
 ### Reliability notes
 

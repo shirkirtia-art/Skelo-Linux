@@ -13,6 +13,9 @@ import os
 import subprocess
 import sys
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from skelo_common import clean_sudo_env, get_real_home
+
 
 def get_apps():
     """Scans standard desktop entry paths and returns a dictionary of apps."""
@@ -149,35 +152,66 @@ def launch_app_by_style(app):
     
     # 1. Build clean environment for the application
     env = os.environ.copy()
-    
-    # Remove sudo environment variables to prevent Flatpak from rejecting execution
-    for key in list(env.keys()):
-        if key.startswith("SUDO_"):
-            env.pop(key)
-            
+    clean_sudo_env(env)
+
     # Attempt to locate graphical user info to restore session variables if missing
+    import pwd
+    uid = os.getuid()
+    if uid == 0:
+        target_user = os.environ.get("SKELO_DESKTOP_USER")
+        if not target_user:
+            try:
+                candidates = [p for p in pwd.getpwall() if 1000 <= p.pw_uid < 65534]
+                for p in candidates:
+                    if os.path.isdir(f"/run/user/{p.pw_uid}"):
+                        target_user = p.pw_name
+                        uid = p.pw_uid
+                        break
+                if not target_user and candidates:
+                    target_user = candidates[0].pw_name
+                    uid = candidates[0].pw_uid
+            except Exception:
+                target_user = "user"
+                uid = 1000
+        else:
+            try:
+                uid = pwd.getpwnam(target_user).pw_uid
+            except Exception:
+                uid = 1000
+    else:
+        try:
+            target_user = pwd.getpwuid(uid).pw_name
+        except Exception:
+            target_user = os.environ.get("USER", "user")
+
     try:
-        import pwd
-        uid = os.getuid()
-        username = pwd.getpwuid(uid).pw_name
-        
-        # If running as root (or through sudo), target ciphyrtech (UID 1000)
-        if uid == 0:
-            uid = 1000
-            username = "ciphyrtech"
+        user_home = pwd.getpwuid(uid).pw_dir
     except Exception:
-        uid = 1000
-        username = "ciphyrtech"
+        user_home = get_real_home()
 
     # Set default graphical environment variables if they are not defined
     if "DISPLAY" not in env:
         env["DISPLAY"] = ":0"
     if "XAUTHORITY" not in env:
-        env["XAUTHORITY"] = f"/home/{username}/.Xauthority"
+        xauth = os.path.join(user_home, ".Xauthority")
+        if os.path.exists(xauth):
+            env["XAUTHORITY"] = xauth
     if "DBUS_SESSION_BUS_ADDRESS" not in env:
         env["DBUS_SESSION_BUS_ADDRESS"] = f"unix:path=/run/user/{uid}/bus"
     if "XDG_RUNTIME_DIR" not in env:
         env["XDG_RUNTIME_DIR"] = f"/run/user/{uid}"
+
+    # Enable accessibility for Chromium / Electron / GTK / Qt apps
+    env["ACCESSIBILITY_ENABLED"] = "1"
+    env["GNOME_ACCESSIBILITY"] = "1"
+    env["QT_ACCESSIBILITY"] = "1"
+
+    # If launching Chrome / Chromium / Brave / Electron apps, enable renderer accessibility
+    exec_lower = exec_cmd.lower()
+    chromium_apps = ("chrome", "chromium", "brave", "edge", "electron", "spotify", "slack", "discord", "codium", "code")
+    if any(app_name in exec_lower for app_name in chromium_apps):
+        if "--force-renderer-accessibility" not in exec_cmd:
+            exec_cmd += " --force-renderer-accessibility"
 
     # 2. Apply style adjustments
     if category == "AppImage / Local Binaries":

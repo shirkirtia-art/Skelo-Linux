@@ -136,7 +136,6 @@ class FlatWalker:
 
         if meaningful:
             node = {
-                "id": f"el_{len(self.elements) + 1}",
                 "type": elem_type,
                 "label": label,
                 "bounds": bounds,
@@ -276,6 +275,8 @@ def main():
                          help="Flat mode only: keep just clickable/editable/focused/selected elements.")
     parser.add_argument("--max-value-len", type=int, default=300,
                          help="Truncate text/value content to this many characters (flat mode).")
+    parser.add_argument("--summary", action="store_true",
+                         help="Output a concise human-readable table summary instead of raw JSON.")
     args = parser.parse_args()
 
     if not args.app and not args.title:
@@ -313,6 +314,23 @@ def main():
             walker.elements,
             key=lambda e: (e["bounds"]["y"], e["bounds"]["x"]) if e.get("bounds") else (0, 0),
         )
+        for idx, el in enumerate(elements, 1):
+            el["id"] = f"el_{idx}"
+
+        if args.summary:
+            print(f"\nWindow: {app.get_name()} — '{win.get_name()}'")
+            print(f"Elements: {len(elements)} (visited {walker.visited})")
+            print(f"{'ID':<7} {'Type':<16} {'Region':<14} {'Target':<14} {'Label / Value'}")
+            print("-" * 80)
+            for el in elements:
+                target = f"({el['click_target']['x']},{el['click_target']['y']})" if el.get("click_target") else "-"
+                lbl = el.get("label") or el.get("value") or "-"
+                if len(str(lbl)) > 35:
+                    lbl = str(lbl)[:32] + "..."
+                print(f"{el['id']:<7} {el['type']:<16} {el.get('region','-'):<14} {target:<14} {lbl}")
+            print()
+            return
+
         result = {
             "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             "app_name": app.get_name(),

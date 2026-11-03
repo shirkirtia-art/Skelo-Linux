@@ -25,9 +25,16 @@ import warnings
 
 # Clean environment variables: remove SUDO_* variables to prevent permission errors
 import os
-for _k in list(os.environ.keys()):
-    if _k.startswith("SUDO_"):
-        os.environ.pop(_k)
+
+def clean_sudo_env(env_dict=None):
+    """Remove SUDO_* variables to prevent permission errors (e.g. Flatpak/D-Bus)."""
+    target = os.environ if env_dict is None else env_dict
+    for _k in list(target.keys()):
+        if _k.startswith("SUDO_"):
+            target.pop(_k, None)
+    return target
+
+clean_sudo_env()
 
 
 def _ensure_desktop_user():
@@ -48,7 +55,7 @@ def _ensure_desktop_user():
     anything else. This makes identification consistent no matter how the
     script was invoked.
     """
-    if os.name != "posix" or os.environ.get("SKELO_REEXEC_DONE") == "1":
+    if os.name != "posix" or os.environ.get("SKELO_REEXEC_DONE") == "1" or not sys.argv or sys.argv[0] == "-c":
         return
     try:
         if os.getuid() != 0:
@@ -133,34 +140,48 @@ def _ensure_desktop_user():
         env["HOME"] = target_pw.pw_dir
         env["USER"] = target_user
         env["LOGNAME"] = target_user
-        os.execvpe("sudo", ["sudo", "-u", target_user, "-E", "--", sys.executable] + sys.argv, env)
+        cmd_args = sys.argv.copy()
+        if cmd_args and cmd_args[0].startswith("python") and " -m " in cmd_args[0]:
+            parts = cmd_args[0].split(" -m ", 1)
+            cmd_args = ["-m", parts[1]] + cmd_args[1:]
+        os.execvpe("sudo", ["sudo", "-u", target_user, "-E", "--", sys.executable] + cmd_args, env)
     except Exception:
         pass  # if re-exec isn't possible here, continue as root
 
 
 _ensure_desktop_user()
 
-# Dynamically resolve running user's AT-SPI bus socket to prevent GLib/Atspi
-# from reading X11 root window's AT_SPI_BUS property (which points to root's bus /root/.cache/at-spi/bus_0)
-# This remains as a last-resort fallback for the rare case _ensure_desktop_user()
-# above couldn't re-exec (e.g. sudo unavailable) — it does NOT fix the
-# peer-UID rejection, it only helps the (already degraded) legacy path.
+# Dynamically resolve running user's AT-SPI bus socket.
+# On Linux, AT-SPI bus address can be in:
+# 1. AT_SPI_BUS_ADDRESS env var (if already set)
+# 2. /run/user/{uid}/at-spi/bus_0 (unix domain socket)
+# 3. {home_dir}/.cache/at-spi/bus_0 (text file containing AT_SPI_BUS_ADDRESS='...')
 try:
-    import pwd
-    uid = os.getuid()
-    if uid == 0:
-        uid = 1000
-    bus_path = f"/run/user/{uid}/at-spi/bus_0"
-    if os.path.exists(bus_path):
-        os.environ["AT_SPI_BUS_ADDRESS"] = f"unix:path={bus_path}"
-    else:
-        home_dir = pwd.getpwuid(uid).pw_dir
-        cache_bus = f"{home_dir}/.cache/at-spi/bus_0"
-        if os.path.exists(cache_bus):
-            os.environ["AT_SPI_BUS_ADDRESS"] = f"unix:path={cache_bus}"
+    if "AT_SPI_BUS_ADDRESS" not in os.environ:
+        import pwd
+        uid = os.getuid()
+        if uid == 0:
+            uid = 1000
+        bus_socket = f"/run/user/{uid}/at-spi/bus_0"
+        if os.path.exists(bus_socket):
+            os.environ["AT_SPI_BUS_ADDRESS"] = f"unix:path={bus_socket}"
+        else:
+            try:
+                home_dir = pwd.getpwuid(uid).pw_dir
+                cache_file = f"{home_dir}/.cache/at-spi/bus_0"
+                if os.path.isfile(cache_file):
+                    with open(cache_file, "r") as f:
+                        for line in f:
+                            line = line.strip()
+                            if "AT_SPI_BUS_ADDRESS=" in line:
+                                addr = line.split("AT_SPI_BUS_ADDRESS=", 1)[-1].strip("'\" \n")
+                                if addr:
+                                    os.environ["AT_SPI_BUS_ADDRESS"] = addr
+                                    break
+            except Exception:
+                pass
 except Exception:
-    if os.path.exists("/run/user/1000/at-spi/bus_0"):
-        os.environ["AT_SPI_BUS_ADDRESS"] = "unix:path=/run/user/1000/at-spi/bus_0"
+    pass
 
 try:
     import gi
@@ -257,6 +278,9 @@ def is_clickable(acc, role):
         return False
 
 
+INVALID_COORD_THRESHOLD = -1_000_000
+
+
 def is_meaningful_element(elem_type, role, label, value, bounds, clickable, focused, selected, interactive_only=False):
     """Shared 'is this AT-SPI node worth surfacing' predicate.
 
@@ -269,12 +293,18 @@ def is_meaningful_element(elem_type, role, label, value, bounds, clickable, focu
     an el_100 from one script's output did not refer to the same element
     in the other. With both walking the same predicate in the same
     traversal order, their numbering lines up."""
-    has_area = bool(bounds) and bounds.get("width", 0) > 0 and bounds.get("height", 0) > 0
+    has_valid_bounds = (
+        bool(bounds)
+        and bounds.get("width", 0) > 0
+        and bounds.get("height", 0) > 0
+        and bounds.get("x", 0) > INVALID_COORD_THRESHOLD
+        and bounds.get("y", 0) > INVALID_COORD_THRESHOLD
+    )
     is_structural = role in STRUCTURAL_ROLES
     has_content = bool(label) or (value not in (None, ""))
     is_interactive = bool(clickable) or focused or selected
 
-    meaningful = has_area and (has_content or is_interactive or not is_structural) \
+    meaningful = has_valid_bounds and (has_content or is_interactive or not is_structural) \
         and (has_content or is_interactive or elem_type in ("window", "dialog"))
 
     if meaningful and interactive_only:
@@ -292,6 +322,9 @@ def get_bounds(acc):
         component = acc.get_component_iface()
         if component:
             extents = component.get_extents(Atspi.CoordType.SCREEN)
+            # Filter unrendered / placeholder AT-SPI sentinels (-2147483648)
+            if extents.x <= INVALID_COORD_THRESHOLD or extents.y <= INVALID_COORD_THRESHOLD:
+                return None
             return {"x": extents.x, "y": extents.y, "width": extents.width, "height": extents.height}
     except Exception:
         pass
@@ -461,37 +494,48 @@ def scroll_into_view(acc):
     return False
 
 
-def try_activate_window(win_acc):
+def try_activate_window(win_acc, win_id=None):
     """Best-effort focus/raise. AT-SPI grab_focus() often but not always
     raises the window too; falls back to wmctrl if installed."""
     activated = False
-    try:
-        comp = win_acc.get_component_iface()
-        if comp:
-            activated = bool(comp.grab_focus())
-    except Exception:
-        pass
-    try:
-        title = win_acc.get_name() or ""
-        if title:
-            subprocess.run(["wmctrl", "-a", title], timeout=1,
+    if win_acc:
+        try:
+            comp = win_acc.get_component_iface()
+            if comp:
+                activated = bool(comp.grab_focus())
+        except Exception:
+            pass
+    if win_id:
+        try:
+            subprocess.run(["wmctrl", "-i", "-a", win_id], timeout=1,
                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    except Exception:
-        pass
+        except Exception:
+            pass
+    elif win_acc:
+        try:
+            title = win_acc.get_name() or ""
+            if title:
+                subprocess.run(["wmctrl", "-a", title], timeout=1,
+                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except Exception:
+            pass
     return activated
 
 
-def is_window_active(win_acc):
+def is_window_active(win_acc, win_id=None):
     """True if the window manager currently considers this the
-    active/focused window. This is the best signal AT-SPI gives us for
-    'nothing else is drawn on top of it' — there's no direct way to read
-    raw X11 stacking order from the accessibility tree, but a window that
-    isn't ACTIVE/FOCUSED after an activation attempt is a strong sign
-    something else (another app's window) is still in front of it."""
-    return is_state(win_acc, Atspi.StateType.ACTIVE) or is_state(win_acc, Atspi.StateType.FOCUSED)
+    active/focused window. Checks both X11 root window active property
+    and AT-SPI focus state."""
+    if win_id:
+        active_id = _active_window_id()
+        if active_id is not None and _norm_win_id(win_id) == active_id:
+            return True
+    if win_acc:
+        return is_state(win_acc, Atspi.StateType.ACTIVE) or is_state(win_acc, Atspi.StateType.FOCUSED)
+    return False
 
 
-def ensure_window_topmost(win_acc, retries=3, retry_delay=0.25):
+def ensure_window_topmost(win_acc, retries=3, retry_delay=0.25, win_id=None):
     """Raises/activates a window and *verifies* it actually became active
     before returning, instead of firing wmctrl -a once and hoping.
 
@@ -506,10 +550,19 @@ def ensure_window_topmost(win_acc, retries=3, retry_delay=0.25):
     prefer an AT-SPI direct action click instead (see direct_action_click),
     which doesn't depend on what's drawn on top.
     """
+    if not win_id and win_acc:
+        try:
+            title = win_acc.get_name() or ""
+            if title:
+                wid, _, _ = resolve_window_id(None, title_query=title)
+                win_id = wid
+        except Exception:
+            pass
+
     for _attempt in range(retries):
-        try_activate_window(win_acc)
+        try_activate_window(win_acc, win_id=win_id)
         time.sleep(retry_delay)
-        if is_window_active(win_acc):
+        if is_window_active(win_acc, win_id=win_id):
             return True
     return False
 
@@ -771,10 +824,17 @@ def filter_nested_subframes(windows):
 
 
 def get_screen_resolution():
-    """AT-SPI doesn't expose screen geometry; shell out to xrandr."""
+    """Returns {'width': int, 'height': int} of the primary screen."""
+    try:
+        import pyautogui as _pag
+        w, h = _pag.size()
+        if w > 0 and h > 0:
+            return {"width": int(w), "height": int(h)}
+    except Exception:
+        pass
     import re
     try:
-        out = subprocess.run(["xrandr", "--current"], capture_output=True, text=True, timeout=3).stdout
+        out = subprocess.run(["xrandr", "--current"], capture_output=True, text=True, timeout=2).stdout
         m = re.search(r"current\s+(\d+)\s*x\s*(\d+)", out)
         if m:
             return {"width": int(m.group(1)), "height": int(m.group(2))}

@@ -329,7 +329,16 @@ def confirm_target_window(app_query, title_query=None):
     return chosen["app_name"], chosen["window_title"], None, caveat
 
 
-def map_application(app_query, title_query=None, output=None):
+DANGEROUS_VERBS = (
+    "close", "exit", "quit", "delete", "remove", "clear",
+    "format", "shutdown", "restart", "reboot", "kill", "terminate",
+    "drop", "wipe", "send", "submit", "pay", "purchase", "checkout", "buy",
+    "post", "publish", "apply", "save", "overwrite", "reset",
+    "logout", "signout", "disconnect", "block", "mute", "discard",
+)
+
+
+def map_application(app_query, title_query=None, output=None, test_actions=False):
     """Runs the full mapping flow and returns a result dict. Never raises;
     all failures come back as {"status": "error", ...} so callers (the CLI
     below, or an orchestrator like skelo_learn.py) can handle them
@@ -341,8 +350,8 @@ def map_application(app_query, title_query=None, output=None):
 
     # Focus the *confirmed* window, not the raw (possibly loose) query.
     print(f"Focusing application '{confirmed_app}'...", file=sys.stderr, flush=True)
-    subprocess.run(['wmctrl', '-a', confirmed_title or confirmed_app])
-    time.sleep(1.0)
+    subprocess.run(['wmctrl', '-a', confirmed_title or confirmed_app], timeout=2, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    time.sleep(0.5)
 
     # Resolve via AT-SPI using the confirmed identity, so this can't drift
     # from what confirm_target_window() just verified is actually open.
@@ -363,11 +372,7 @@ def map_application(app_query, title_query=None, output=None):
     app_name = app_node.get_name()
     win_title = win_node.get_name()
 
-    # Belt-and-suspenders: even after resolving via find_window(), verify
-    # the AT-SPI node we're about to click actually corresponds to what we
-    # confirmed was open. If it doesn't, something raced (a different
-    # window of the same app grabbed focus, etc.) — abort rather than map
-    # and mislabel the wrong thing.
+    # Belt-and-suspenders: verify title match
     if confirmed_title and win_title and confirmed_title != win_title \
             and confirmed_title.lower() not in win_title.lower() \
             and win_title.lower() not in confirmed_title.lower():
@@ -376,7 +381,7 @@ def map_application(app_query, title_query=None, output=None):
             "error": "Identity mismatch: confirmed open window was "
                      f"'{confirmed_title}' but AT-SPI resolved to '{win_title}'.",
             "hint": "This app likely switched windows between the check and "
-                    "the mapping pass. Re-run map_app.py.",
+                     "the mapping pass. Re-run map_app.py.",
         }
 
     # Scrape layout first
@@ -384,79 +389,68 @@ def map_application(app_query, title_query=None, output=None):
     mapper = AppMapper()
     mapper.walk(win_node, 0, win_bounds)
 
-    print(f"Discovered {len(mapper.controls)} interactive controls. Testing action mapping...", file=sys.stderr, flush=True)
-    
-    # We will test click each interactive control and monitor window/menu changes
-    # To keep discovery safe, we only test buttons, toggle_buttons, and tabs.
-    tested_count = 0
-    for control in mapper.controls:
-        # Avoid clicking text fields, menu items, or list items that require complex input
-        if control["type"] not in ("button", "toggle_button", "tab"):
-            control["action_performed"] = "Interactive type - click test bypassed"
-            continue
+    print(f"Discovered {len(mapper.controls)} interactive controls.", file=sys.stderr, flush=True)
 
-        # Avoid clicking potentially dangerous or disruptive system buttons (e.g. exit, close, quit)
-        label_lower = control["label"].lower()
-        if any(w in label_lower for w in ("close", "exit", "quit", "delete", "remove", "clear")):
-            control["action_performed"] = "Bypassed to prevent application termination or data loss"
-            continue
+    if not test_actions:
+        # Default mode: safe, instant non-intrusive structure mapping (no clicking buttons)
+        for control in mapper.controls:
+            control["action_performed"] = "Discovered (structure mapped)"
+    else:
+        print("Testing action mapping (--test-actions requested)...", file=sys.stderr, flush=True)
+        tested_count = 0
+        for control in mapper.controls:
+            if control["type"] not in ("button", "toggle_button", "tab"):
+                control["action_performed"] = "Interactive type - click test bypassed"
+                continue
 
-        # Get initial state
-        initial_windows = get_current_windows(app_name)
-        initial_menus = get_current_menus()
+            label_lower = control["label"].lower()
+            if any(w in label_lower for w in DANGEROUS_VERBS):
+                control["action_performed"] = "Bypassed to prevent application termination, state change, or data loss"
+                continue
 
-        # Resolve click target
-        cx = control["absolute_bounds"]["x"] + control["absolute_bounds"]["width"] // 2
-        cy = control["absolute_bounds"]["y"] + control["absolute_bounds"]["height"] // 2
+            # Initial state
+            initial_windows = get_current_windows(app_name)
+            initial_menus = get_current_menus()
 
-        # Sanity check: do not click off-screen coordinates
-        screen_w, screen_h = pyautogui.size()
-        if not (0 <= cx <= screen_w and 0 <= cy <= screen_h):
-            control["action_performed"] = f"Bypassed because coordinate ({cx}, {cy}) is off-screen"
-            print(f" -> Result: Bypassed (off-screen target: {cx}, {cy})", file=sys.stderr, flush=True)
-            continue
+            cx = control["absolute_bounds"]["x"] + control["absolute_bounds"]["width"] // 2
+            cy = control["absolute_bounds"]["y"] + control["absolute_bounds"]["height"] // 2
 
-        # Raise the window to the top layer before clicking to avoid hitting overlapping windows
-        try_activate_window(win_node)
-        time.sleep(0.2)
+            screen_w, screen_h = pyautogui.size()
+            if not (0 <= cx <= screen_w and 0 <= cy <= screen_h):
+                control["action_performed"] = f"Bypassed because coordinate ({cx}, {cy}) is off-screen"
+                continue
 
-        print(f"Testing button '{control['label']}' at ({cx}, {cy})...", file=sys.stderr, flush=True)
-        # Move mouse and click
-        pyautogui.click(cx, cy)
-        time.sleep(0.8) # Wait for UI to update
+            try_activate_window(win_node)
+            time.sleep(0.2)
 
-        # Inspect resulting state
-        post_windows = get_current_windows(app_name)
-        post_menus = get_current_menus()
+            print(f"Testing button '{control['label']}' at ({cx}, {cy})...", file=sys.stderr, flush=True)
+            pyautogui.click(cx, cy)
+            time.sleep(0.8)
 
-        new_windows = post_windows - initial_windows
-        new_menus = [m for m in post_menus if m not in initial_menus]
+            post_windows = get_current_windows(app_name)
+            post_menus = get_current_menus()
+            new_windows = post_windows - initial_windows
+            new_menus = [m for m in post_menus if m not in initial_menus]
 
-        # Analyze changes
-        if new_windows:
-            win_list = ", ".join([f"'{w}'" for w in new_windows])
-            control["action_performed"] = f"Opens window(s): {win_list}"
-            print(f" -> Result: {control['action_performed']}", file=sys.stderr, flush=True)
-            # Dismiss new window by pressing Escape
-            pyautogui.press('escape')
-            time.sleep(0.5)
-        elif new_menus:
-            menu_list = ", ".join([f"'{m}'" for m in new_menus[:5]])
-            if len(new_menus) > 5:
-                menu_list += f" and {len(new_menus)-5} more"
-            control["action_performed"] = f"Spawns popup menu containing: [{menu_list}]"
-            print(f" -> Result: {control['action_performed']}", file=sys.stderr, flush=True)
-            # Dismiss menu by pressing Escape
-            pyautogui.press('escape')
-            time.sleep(0.5)
-        else:
-            control["action_performed"] = "Triggers internal state change or no visible action"
+            if new_windows:
+                win_list = ", ".join([f"'{w}'" for w in new_windows])
+                control["action_performed"] = f"Opens window(s): {win_list}"
+                pyautogui.press('escape')
+                time.sleep(0.5)
+            elif new_menus:
+                menu_list = ", ".join([f"'{m}'" for m in new_menus[:5]])
+                if len(new_menus) > 5:
+                    menu_list += f" and {len(new_menus)-5} more"
+                control["action_performed"] = f"Spawns popup menu containing: [{menu_list}]"
+                pyautogui.press('escape')
+                time.sleep(0.5)
+            else:
+                control["action_performed"] = "Triggers internal state change or no visible action"
 
-        tested_count += 1
-        # Prevent runaway execution on applications with hundreds of buttons
-        if tested_count >= 20:
-            print("Mapping test cap reached (20 buttons tested).", file=sys.stderr, flush=True)
-            break
+            tested_count += 1
+            if tested_count >= 20:
+                print("Mapping test cap reached (20 buttons tested).", file=sys.stderr, flush=True)
+                break
 
     # Save mapping files
     slug = app_name.lower().replace(" ", "_")
@@ -568,13 +562,18 @@ def map_application(app_query, title_query=None, output=None):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Map an application window and test click actions.")
+    parser = argparse.ArgumentParser(description="Map an application window and extract UI controls.")
     parser.add_argument("--app", required=True, help="App name substring (case-insensitive)")
     parser.add_argument("--title", default=None, help="Window title substring (case-insensitive)")
     parser.add_argument("--output", default=None, help="Custom output JSON path (defaults to skills/<app_name>.json)")
+    parser.add_argument("--test-actions", action="store_true",
+                         help="Actively test-click buttons to detect spawned dialogs/menus (off by default for safety).")
+    parser.add_argument("--no-click", "--dry-run", action="store_true", dest="no_click",
+                         help="Discovery only: do not click any controls (default).")
     args = parser.parse_args()
 
-    result = map_application(args.app, args.title, args.output)
+    test_actions = args.test_actions and not args.no_click
+    result = map_application(args.app, args.title, args.output, test_actions=test_actions)
     print(json.dumps(result, indent=2))
     sys.exit(0 if result.get("status") == "success" else 1)
 

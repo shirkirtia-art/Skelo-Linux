@@ -85,17 +85,66 @@ def action_scroll(amount):
     return {"action": "scroll", "amount": amount}
 
 
-def action_type(text):
-    pyautogui.write(text, interval=random.uniform(0.02, 0.08))
-    return {"action": "type", "text": text}
+def _is_ascii_simple(s):
+    try:
+        s.encode("ascii")
+        return "\n" not in s and "\r" not in s and "\t" not in s
+    except UnicodeEncodeError:
+        return False
+
+
+def action_type(text, use_clipboard=None):
+    text_str = str(text)
+    should_paste = use_clipboard if use_clipboard is not None else (not _is_ascii_simple(text_str) or len(text_str) > 100)
+
+    if should_paste:
+        pasted = False
+        try:
+            p = subprocess.Popen(["xclip", "-selection", "clipboard"], stdin=subprocess.PIPE)
+            p.communicate(text_str.encode("utf-8"))
+            if p.returncode == 0:
+                pasted = True
+        except Exception:
+            pass
+        if not pasted:
+            try:
+                p = subprocess.Popen(["xsel", "-b", "-i"], stdin=subprocess.PIPE)
+                p.communicate(text_str.encode("utf-8"))
+                if p.returncode == 0:
+                    pasted = True
+            except Exception:
+                pass
+        if pasted and pyautogui:
+            time.sleep(0.05)
+            pyautogui.hotkey("ctrl", "v")
+            time.sleep(0.05)
+            return {"action": "type", "text": text_str, "method": "clipboard_paste"}
+
+    if pyautogui:
+        pyautogui.write(text_str, interval=random.uniform(0.01, 0.04))
+    return {"action": "type", "text": text_str, "method": "keystrokes"}
 
 
 def action_keypress(key):
-    if "+" in key:
-        parts = key.split("+")
-        pyautogui.hotkey(*parts)
+    key_str = str(key).strip()
+    if key_str in ("+", "plus"):
+        if pyautogui:
+            pyautogui.press("+")
+        return {"action": "keypress", "key": key_str}
+
+    if "+" in key_str:
+        if key_str.endswith("++"):
+            prefix = key_str[:-2]
+            parts = [p.lower().strip() for p in prefix.split("+") if p.strip()] + ["+"]
+        else:
+            parts = [p.lower().strip() for p in key_str.split("+") if p.strip()]
+        if parts and pyautogui:
+            pyautogui.hotkey(*parts)
+        elif pyautogui:
+            pyautogui.press("+")
     else:
-        pyautogui.press(key)
+        if pyautogui:
+            pyautogui.press(key_str.lower())
     return {"action": "keypress", "key": key}
 
 
@@ -125,20 +174,20 @@ def action_draw_circle(cx, cy, radius, steps=40, duration=1.5):
 # --------------------------------------------------------------------------
 
 def search_element(win_acc, label=None, role=None, element_id=None, max_depth=30, max_elements=5000):
-    """Fresh depth-first walk of the live tree. Returns candidate dicts:
-    {acc, node, depth}. el_N ids are assigned only to 'meaningful' nodes,
-    in the same traversal order and by the same predicate inspect_window.py
-    uses, so an id from inspect_window.py's output can be passed straight
-    into --element-id here and resolve to the same element."""
-    candidates = []
-    counter = {"visited": 0, "meaningful": 0}
+    """Fresh walk of the live tree. Collects all meaningful nodes,
+    sorts them in the exact same spatial reading order inspect_window.py uses,
+    and assigns identical sequential el_N ids. This guarantees that an el_N id
+    from inspect_window.py's output resolves to the exact same element here."""
+    raw_nodes = []
+    visited = 0
 
     def walk(acc, depth=0):
-        if acc is None or depth > max_depth or counter["visited"] >= max_elements:
+        nonlocal visited
+        if acc is None or depth > max_depth or visited >= max_elements:
             return
-        counter["visited"] += 1
+        visited += 1
         try:
-            raw_role = acc.get_role_name()
+            raw_role = acc.get_role_name() or "unknown"
         except Exception:
             raw_role = "unknown"
         elem_type = ROLE_TYPE_MAP.get(raw_role, raw_role.replace(" ", "_") if raw_role else "unknown")
@@ -150,50 +199,27 @@ def search_element(win_acc, label=None, role=None, element_id=None, max_depth=30
         focused = is_state(acc, Atspi.StateType.FOCUSED)
         selected = is_state(acc, Atspi.StateType.SELECTED)
 
-        # Same predicate inspect_window.py uses to decide what to emit —
-        # and, critically, the same rule for when to hand out the next
-        # el_N. This is what makes an id copied from inspect_window.py's
-        # output resolve to the *same* element here, instead of an
-        # unrelated node elsewhere in the tree (previously this counted
-        # every single node, meaningful or not, so the two scripts' el_N
-        # numbering silently diverged).
         meaningful = is_meaningful_element(
             elem_type, raw_role, name, value, bounds, clickable_state, focused, selected,
         )
-        node_id = None
         if meaningful:
-            counter["meaningful"] += 1
-            node_id = f"el_{counter['meaningful']}"
-
-        match = True
-        if element_id and node_id != element_id:
-            match = False
-        if match and label and not (name and label.lower() in name.lower()):
-            match = False
-        if match and role and role.lower() not in (raw_role.lower(), elem_type.lower()):
-            match = False
-        if match and element_id and node_id is None:
-            match = False
-
-        if match:
-            node = {"type": elem_type, "id": node_id, "label": name, "role": raw_role}
-            if node_id is None:
-                node["id_note"] = ("not numbered by inspect_window.py "
-                                    "(structural/non-meaningful element)")
-            if label_inferred:
-                node["label_inferred"] = True
-            if bounds:
-                node["bounds"] = bounds
-            clickable = raw_role in CLICKABLE_ROLES
-            node["clickable"] = clickable
-            candidates.append({"acc": acc, "node": node, "depth": depth})
+            raw_nodes.append({
+                "acc": acc,
+                "elem_type": elem_type,
+                "raw_role": raw_role,
+                "name": name,
+                "label_inferred": label_inferred,
+                "bounds": bounds,
+                "clickable": raw_role in CLICKABLE_ROLES,
+                "depth": depth,
+            })
 
         try:
             n_children = acc.get_child_count()
         except Exception:
             n_children = 0
         for i in range(n_children):
-            if counter["visited"] >= max_elements:
+            if visited >= max_elements:
                 break
             try:
                 child = acc.get_child_at_index(i)
@@ -202,7 +228,37 @@ def search_element(win_acc, label=None, role=None, element_id=None, max_depth=30
             walk(child, depth + 1)
 
     walk(win_acc)
-    candidates.sort(key=lambda c: (c["node"]["clickable"] is not True, c["depth"]))
+
+    # Sort spatially exactly like inspect_window.py and assign identical el_N ids
+    raw_nodes.sort(key=lambda r: (r["bounds"]["y"], r["bounds"]["x"]) if r.get("bounds") else (0, 0))
+
+    candidates = []
+    for idx, item in enumerate(raw_nodes, 1):
+        node_id = f"el_{idx}"
+        match = True
+        if element_id and node_id != element_id:
+            match = False
+        if match and label and not (item["name"] and label.lower() in item["name"].lower()):
+            match = False
+        if match and role and role.lower() not in (item["raw_role"].lower(), item["elem_type"].lower()):
+            match = False
+
+        if match:
+            node = {
+                "type": item["elem_type"],
+                "id": node_id,
+                "label": item["name"],
+                "role": item["raw_role"],
+                "clickable": item["clickable"],
+            }
+            if item["label_inferred"]:
+                node["label_inferred"] = True
+            if item["bounds"]:
+                node["bounds"] = item["bounds"]
+            candidates.append({"acc": item["acc"], "node": node, "depth": item["depth"]})
+
+    if not element_id:
+        candidates.sort(key=lambda c: (c["node"]["clickable"] is not True, c["depth"]))
     return candidates
 
 
@@ -527,17 +583,20 @@ def run_single_action(act_dict):
                 )
 
             if method == "auto" and acc:
-                time.sleep(0.15)
-                pre_state = res_info.get("pre_click_state", {}) if res_info else {}
-                after_flags = get_state_flags(acc)
-                if after_flags == pre_state:
-                    ok, err = direct_action_click(acc)
-                    res["auto_fallback_triggered"] = True
-                    res["auto_fallback_succeeded"] = ok
-                    if err:
-                        res["auto_fallback_error"] = err
-                    if ok:
-                        res["method_used"] = "cursor+action_fallback"
+                raw_role = (res_info.get("resolved_element", {}).get("role") or "").lower()
+                is_stateful = any(s in raw_role for s in ("toggle", "check", "radio", "tab", "expand"))
+                if is_stateful:
+                    time.sleep(0.15)
+                    pre_state = res_info.get("pre_click_state", {}) if res_info else {}
+                    after_flags = get_state_flags(acc)
+                    if after_flags == pre_state:
+                        ok, err = direct_action_click(acc)
+                        res["auto_fallback_triggered"] = True
+                        res["auto_fallback_succeeded"] = ok
+                        if err:
+                            res["auto_fallback_error"] = err
+                        if ok:
+                            res["method_used"] = "cursor+action_fallback"
                         
         if res_info:
             res.update(res_info)
@@ -718,10 +777,12 @@ def main():
     
     args = parser.parse_args()
 
-    # Load pyautogui early
+    # Load pyautogui
     global pyautogui
     pyautogui, _pag_err = load_pyautogui()
-    if pyautogui is None:
+    is_window_op = args.action in ("minimize", "maximize", "unmaximize", "raise_window", "close_window")
+    is_direct_action = (args.method == "action")
+    if pyautogui is None and not (is_window_op or is_direct_action or args.list_candidates):
         print(json.dumps(_pag_err))
         sys.exit(1)
 

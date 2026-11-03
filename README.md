@@ -165,11 +165,12 @@ chmod +x skelo.sh
 
 ```bash
 skelo windows                                   # what's open right now
+skelo inspect --app "nemo" --summary             # view clean terminal UI summary
 skelo open "Spotify"                             # launch an installed app
 skelo minimize --app "Chrome"                    # clear something out of the way
 skelo click --app "Spotify" --label "Pause"       # click by live label lookup
-skelo learn --app "OBS Studio"                    # map a new app once
-skelo resolve --skill skills/obs_studio.json --label "Settings" --click
+skelo learn --app "OBS Studio"                    # map a new app safely
+skelo resolve --skill obs_studio --label "Settings" --click
 ```
 
 Run `skelo help` for the full command reference.

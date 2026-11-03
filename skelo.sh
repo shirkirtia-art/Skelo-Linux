@@ -170,6 +170,8 @@ case "$cmd" in
     resolve)     run_py skelo_resolve.py "$@" ;;
 
     click)       run_py skelo_action.py --action click "$@" ;;
+    double-click) run_py skelo_action.py --action click --clicks 2 "$@" ;;
+    right-click) run_py skelo_action.py --action click --button right "$@" ;;
     type)        run_py skelo_action.py --action type "$@" ;;
     key)         run_py skelo_action.py --action keypress "$@" ;;
     scroll)      run_py skelo_action.py --action scroll "$@" ;;
@@ -183,7 +185,10 @@ case "$cmd" in
     alt-tab)     run_py skelo_action.py --action alt_tab "$@" ;;
 
     sequence)
-        if [ "${1:-}" = "--file" ]; then
+        if [ $# -eq 0 ]; then
+            echo "Error: 'sequence' requires a JSON string or --file <path.json>" >&2
+            exit 1
+        elif [ "$1" = "--file" ]; then
             shift
             run_py skelo_action.py --file "$@"
         else
