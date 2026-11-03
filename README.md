@@ -226,5 +226,5 @@ MIT — see [LICENSE](LICENSE).
 
 Built by [**shrikirti**](https://github.com/shirkirtia-art) — Cybersecurity Researcher & Developer,
 building tools in Python to make the web a bit more predictable.
-
+[**Documentation**](https://www.linkedin.com/posts/shrikirti-akki-5715b93a2_skelo-ugcPost-7481221896680923136-Xl-M/)
 </div>
