@@ -57,13 +57,25 @@ class SkeloMCPServer:
         self._running = False
         self._tool_handlers = {
             "skelo_list_windows": self._tool_list_windows,
+            "list_windows": self._tool_list_windows,
             "skelo_inspect": self._tool_inspect,
+            "inspect_window": self._tool_inspect,
+            "inspect": self._tool_inspect,
             "skelo_click": self._tool_click,
+            "click": self._tool_click,
             "skelo_type": self._tool_type,
+            "type_text": self._tool_type,
+            "type": self._tool_type,
             "skelo_hotkey": self._tool_hotkey,
+            "hotkey": self._tool_hotkey,
             "skelo_wait": self._tool_wait,
+            "wait_for": self._tool_wait,
+            "wait": self._tool_wait,
             "skelo_batch": self._tool_batch,
+            "batch": self._tool_batch,
             "skelo_launch": self._tool_launch,
+            "launch_app": self._tool_launch,
+            "launch": self._tool_launch,
         }
 
     def _log(self, message):
