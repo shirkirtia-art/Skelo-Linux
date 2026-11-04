@@ -55,6 +55,8 @@ class SkeloMCPServer:
     def __init__(self):
         self._real_stdout = sys.stdout
         self._running = False
+        self._last_app = None
+        self._last_title = None
         self._tool_handlers = {
             "skelo_list_windows": self._tool_list_windows,
             "list_windows": self._tool_list_windows,
@@ -362,6 +364,8 @@ class SkeloMCPServer:
 
         app_name = app.get_name() if hasattr(app, "get_name") else str(app)
         win_name = win.get_name() if hasattr(win, "get_name") else str(win)
+        self._last_app = app_name
+        self._last_title = win_name
 
         return {
             "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
@@ -379,6 +383,10 @@ class SkeloMCPServer:
         for key in ("app", "label", "role", "element_id", "x", "y"):
             if key in arguments and arguments[key] is not None:
                 act_dict[key] = arguments[key]
+        if "app" not in act_dict and "title" not in act_dict and self._last_app:
+            act_dict["app"] = self._last_app
+            if self._last_title:
+                act_dict["title"] = self._last_title
         act_dict["button"] = arguments.get("button", "left")
         act_dict["clicks"] = int(arguments.get("clicks", 1))
 
@@ -402,6 +410,12 @@ class SkeloMCPServer:
         act_dict = {"action": "type", "text": str(text)}
         if arguments.get("app"):
             act_dict["app"] = arguments["app"]
+        elif self._last_app:
+            act_dict["app"] = self._last_app
+        if arguments.get("title"):
+            act_dict["title"] = arguments["title"]
+        elif self._last_title and not arguments.get("app"):
+            act_dict["title"] = self._last_title
         if arguments.get("element_id"):
             act_dict["element_id"] = arguments["element_id"]
 
@@ -520,6 +534,13 @@ class SkeloMCPServer:
         if not isinstance(actions, list):
             raise ValueError("'actions' argument must be an array of action objects")
         steps = copy.deepcopy(actions)
+        for step in steps:
+            if isinstance(step, dict) and "app" not in step and "title" not in step and self._last_app:
+                # If step targets an element or needs window context, inherit last inspected window
+                if any(k in step for k in ("label", "role", "element_id")) or step.get("action") in ("click", "type"):
+                    step["app"] = self._last_app
+                    if self._last_title:
+                        step["title"] = self._last_title
         res = run_sequence(steps)
         if isinstance(res, dict) and res.get("status") == "error":
             err_msg = res.get("error") or f"Action failed at step {res.get('stopped_at_step')}"

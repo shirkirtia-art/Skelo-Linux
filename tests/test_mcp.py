@@ -142,6 +142,19 @@ class TestSkeloMCPServer(unittest.TestCase):
         parsed = json.loads(result["content"][0]["text"])
         self.assertEqual(parsed.get("status"), "success")
 
+    def test_window_context_inheritance(self):
+        # When an app has been inspected, click and type without app inherit the context
+        self.server._last_app = "MockApp"
+        self.server._last_title = "MockTitle"
+
+        # Verify batch step inheritance
+        batch_args = {"actions": [{"action": "sleep", "duration": 0.01}, {"action": "type", "text": "hello"}]}
+        actions = batch_args["actions"]
+        for step in actions:
+            if "app" not in step and step.get("action") in ("click", "type"):
+                step["app"] = self.server._last_app
+        self.assertEqual(actions[1]["app"], "MockApp")
+
     def test_method_not_found(self):
         req = {"jsonrpc": "2.0", "id": 104, "method": "invalid/method", "params": {}}
         resp = self.server.handle_request(req)

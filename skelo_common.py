@@ -476,9 +476,14 @@ def classify_region(bounds, window_bounds):
 
 def find_window(app_query, title_query):
     """Returns (app_acc, window_acc) for the first app/window matching the
-    given case-insensitive substrings, or (None, None)."""
+    given case-insensitive substrings, or (None, None).
+    If neither app_query nor title_query is specified, prioritizes the currently
+    active/focused window over system desktop or background dock frames."""
     desktop = Atspi.get_desktop(0)
     app_count = desktop.get_child_count() if desktop else 0
+    first_candidate = None
+    system_apps = {"cinnamon", "gnome-shell", "plank", "xfce4-panel", "mate-panel"}
+
     for i in range(app_count):
         try:
             app = desktop.get_child_at_index(i)
@@ -509,7 +514,20 @@ def find_window(app_query, title_query):
             win_title = win.get_name() or ""
             if title_query and title_query.lower() not in win_title.lower():
                 continue
-            return app, win
+
+            if app_query or title_query:
+                return app, win
+
+            # When no filter was given, prioritize the active/focused window
+            if is_state(win, "active") or (ATSPI_AVAILABLE and is_state(win, Atspi.StateType.ACTIVE)):
+                return app, win
+
+            if first_candidate is None and app_name.lower() not in system_apps:
+                first_candidate = (app, win)
+
+    if not app_query and not title_query and first_candidate:
+        return first_candidate
+
     return None, None
 
 
