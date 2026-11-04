@@ -48,12 +48,19 @@ if ATSPI_AVAILABLE:
 
 pyautogui = None
 
+def _ensure_pyautogui():
+    global pyautogui
+    if pyautogui is None:
+        pyautogui, _err = load_pyautogui()
+    return pyautogui
+
 
 # --------------------------------------------------------------------------
 # Coordinate Action Executions
 # --------------------------------------------------------------------------
 
 def action_move(x, y, curviness=0.35, duration=None):
+    _ensure_pyautogui()
     start = pyautogui.position()
     path = build_curved_path((float(start[0]), float(start[1])), (float(x), float(y)), curviness=curviness)
     move_along_path(pyautogui, path, total_duration=duration)
@@ -61,6 +68,7 @@ def action_move(x, y, curviness=0.35, duration=None):
 
 
 def action_click(x, y, button="left", clicks=1, curviness=0.35, duration=None):
+    _ensure_pyautogui()
     result = action_move(x, y, curviness, duration)
     pyautogui.click(x, y, clicks=clicks, button=button)
     result.update({"action": "click", "button": button, "clicks": clicks})
@@ -68,6 +76,7 @@ def action_click(x, y, button="left", clicks=1, curviness=0.35, duration=None):
 
 
 def action_drag(x, y, x2, y2, curviness=0.35, duration=None):
+    _ensure_pyautogui()
     action_move(x, y, curviness, duration)
     pyautogui.mouseDown(button="left")
     time.sleep(0.1)
@@ -81,6 +90,7 @@ def action_drag(x, y, x2, y2, curviness=0.35, duration=None):
 
 
 def action_scroll(amount):
+    _ensure_pyautogui()
     pyautogui.scroll(amount)
     return {"action": "scroll", "amount": amount}
 
@@ -94,6 +104,7 @@ def _is_ascii_simple(s):
 
 
 def action_type(text, use_clipboard=None):
+    _ensure_pyautogui()
     text_str = str(text)
     should_paste = use_clipboard if use_clipboard is not None else (not _is_ascii_simple(text_str) or len(text_str) > 100)
 
@@ -126,6 +137,7 @@ def action_type(text, use_clipboard=None):
 
 
 def action_keypress(key):
+    _ensure_pyautogui()
     key_str = str(key).strip()
     if key_str in ("+", "plus"):
         if pyautogui:
@@ -541,6 +553,8 @@ def action_wait(act_dict):
 
 def run_single_action(act_dict):
     act = act_dict.get("action")
+    if act not in ("sleep", "wait", "minimize", "maximize", "unmaximize", "raise_window", "close_window", "alt_tab"):
+        _ensure_pyautogui()
     
     if act == "sleep":
         duration = float(act_dict.get("duration", 1.0))
@@ -784,6 +798,7 @@ def run_single_action(act_dict):
 # --------------------------------------------------------------------------
 
 def run_sequence(steps):
+    _ensure_pyautogui()
     """Runs each step dict in order. Supports mixed coordinate and resolved actions."""
     results = []
     for idx, step in enumerate(steps):
