@@ -33,7 +33,7 @@ from skelo_common import (
     ROLE_TYPE_MAP, CLICKABLE_ROLES, find_window, get_bounds, get_state_flags,
     scroll_into_view, try_activate_window, direct_action_click,
     ease_in_out_cubic, cubic_bezier, build_curved_path, move_along_path,
-    resolve_click_point, load_pyautogui, resolve_label,
+    resolve_click_point, load_pyautogui, resolve_label, normalize_label,
     is_clickable, is_meaningful_element, get_value, is_state,
     ensure_window_topmost, window_manage,
 )
@@ -238,10 +238,33 @@ def search_element(win_acc, label=None, role=None, element_id=None, max_depth=30
         match = True
         if element_id and node_id != element_id:
             match = False
-        if match and label and not (item["name"] and label.lower() in item["name"].lower()):
-            match = False
-        if match and role and role.lower() not in (item["raw_role"].lower(), item["elem_type"].lower()):
-            match = False
+        if match and label:
+            query = normalize_label(label).lower()
+            name_norm = normalize_label(item["name"] or "").lower()
+            name_raw = (item["name"] or "").lower()
+            if not (query in name_norm or query in name_raw or label.lower() in name_raw):
+                match = False
+        if match and role:
+            r = role.lower().replace("-", " ").replace("_", " ")
+            r_underscore = role.lower().replace("-", "_").replace(" ", "_")
+            raw_r = item["raw_role"].lower().replace("-", " ").replace("_", " ")
+            elem_r = item["elem_type"].lower().replace("-", " ").replace("_", " ")
+            role_aliases = {
+                "text_entry": ["text_field", "entry", "text", "password_text"],
+                "text_field": ["text_entry", "entry", "text", "password_text"],
+                "input": ["text_field", "text_entry", "entry"],
+                "checkbox": ["check_box", "check_button", "toggle_button"],
+                "check_box": ["checkbox", "check_button", "toggle_button"],
+                "button": ["push_button", "toggle_button"],
+                "dropdown": ["combo_box"],
+            }
+            allowed = {r, r_underscore}
+            for k, aliases in role_aliases.items():
+                if r == k or r_underscore == k:
+                    allowed.update(aliases)
+                    allowed.update(a.replace("_", " ") for a in aliases)
+            if not (raw_r in allowed or elem_r in allowed or any(a in raw_r or a in elem_r for a in allowed)):
+                match = False
 
         if match:
             node = {
@@ -446,6 +469,76 @@ def run_window_or_key_action(act, act_dict):
     return res
 
 
+def action_wait(act_dict):
+    """Wait for an element matching criteria to appear (or disappear) within timeout."""
+    app = act_dict.get("app")
+    title = act_dict.get("title")
+    label = act_dict.get("label")
+    role = act_dict.get("role")
+    element_id = act_dict.get("element_id")
+    timeout = float(act_dict.get("timeout") or act_dict.get("wait_timeout") or 5.0)
+    poll_interval = float(act_dict.get("poll_interval") or 0.05)
+    disappear = bool(act_dict.get("disappear", False))
+    max_depth = int(act_dict.get("max_depth", 30))
+    max_elements = int(act_dict.get("max_elements", 5000))
+
+    start_time = time.time()
+    while True:
+        elapsed = time.time() - start_time
+        app_acc, win_acc = find_window(app, title)
+        found = False
+        candidates = []
+        if win_acc is not None:
+            if not any((label, role, element_id)):
+                # Just waiting for window to appear
+                found = True
+            else:
+                candidates = search_element(
+                    win_acc, label=label, role=role, element_id=element_id,
+                    max_depth=max_depth, max_elements=max_elements
+                )
+                found = len(candidates) > 0
+        else:
+            found = False
+
+        if not disappear and found:
+            res = {
+                "status": "success",
+                "action": "wait",
+                "found": True,
+                "elapsed": round(elapsed, 3),
+                "timeout": timeout,
+                "candidate_count": len(candidates),
+            }
+            if candidates:
+                res["first_match"] = candidates[0]["node"]
+            return res
+
+        if disappear and not found:
+            return {
+                "status": "success",
+                "action": "wait",
+                "found": False,
+                "disappeared": True,
+                "elapsed": round(elapsed, 3),
+                "timeout": timeout,
+            }
+
+        if elapsed >= timeout:
+            target_desc = f"label='{label}'" if label else (f"role='{role}'" if role else (f"element_id='{element_id}'" if element_id else f"window '{app or title}'"))
+            cond_desc = "disappear" if disappear else "appear"
+            return {
+                "status": "error",
+                "action": "wait",
+                "error": f"Timed out waiting for element matching {target_desc} to {cond_desc} after {round(elapsed, 2)}s",
+                "elapsed": round(elapsed, 3),
+                "timeout": timeout,
+                "criteria": {"app": app, "title": title, "label": label, "role": role, "element_id": element_id},
+            }
+
+        time.sleep(poll_interval)
+
+
 def run_single_action(act_dict):
     act = act_dict.get("action")
     
@@ -453,6 +546,9 @@ def run_single_action(act_dict):
         duration = float(act_dict.get("duration", 1.0))
         time.sleep(duration)
         return {"action": "sleep", "duration": duration}
+
+    if act == "wait":
+        return action_wait(act_dict)
 
     if act in ("minimize", "maximize", "unmaximize", "raise_window", "close_window", "alt_tab"):
         # These don't touch the AT-SPI tree at all (window_manage uses
@@ -722,13 +818,19 @@ def run_sequence(steps):
 # --------------------------------------------------------------------------
 
 def main():
+    if len(sys.argv) > 1:
+        if sys.argv[1] == "wait":
+            sys.argv = [sys.argv[0], "--action", "wait"] + sys.argv[2:]
+        elif sys.argv[1] == "batch":
+            sys.argv = [sys.argv[0], "--batch"] + sys.argv[2:]
+
     parser = argparse.ArgumentParser(
         description="Unified Skelo Action Executor: coordinate actions & live element resolution."
     )
     # Action type
     parser.add_argument("--action", choices=[
         "move", "click", "drag", "scroll", "type", "keypress", "draw_circle",
-        "minimize", "maximize", "unmaximize", "raise_window", "close_window", "alt_tab",
+        "minimize", "maximize", "unmaximize", "raise_window", "close_window", "alt_tab", "wait",
     ])
     
     # Coordinate parameters
@@ -772,17 +874,23 @@ def main():
     parser.add_argument("--list-candidates", action="store_true", dest="list_candidates", help="Just list matching candidates.")
     
     # Sequence options
-    parser.add_argument("--sequence", help="JSON string: list of step/action objects.")
+    parser.add_argument("--sequence", "--batch", dest="sequence", help="JSON string: list of step/action objects.")
     parser.add_argument("--file", help="Path to a JSON file containing a list of step/action objects.")
     
+    # Wait options
+    parser.add_argument("--timeout", "--wait-timeout", type=float, default=5.0, dest="timeout", help="Timeout in seconds for wait action.")
+    parser.add_argument("--poll-interval", type=float, default=0.05, dest="poll_interval", help="Polling interval in seconds for wait action.")
+    parser.add_argument("--disappear", action="store_true", help="Wait for element/window to disappear instead of appear.")
+
     args = parser.parse_args()
 
     # Load pyautogui
     global pyautogui
     pyautogui, _pag_err = load_pyautogui()
     is_window_op = args.action in ("minimize", "maximize", "unmaximize", "raise_window", "close_window")
+    is_wait_op = (args.action == "wait")
     is_direct_action = (args.method == "action")
-    if pyautogui is None and not (is_window_op or is_direct_action or args.list_candidates):
+    if pyautogui is None and not (is_window_op or is_wait_op or is_direct_action or args.list_candidates):
         print(json.dumps(_pag_err))
         sys.exit(1)
 
@@ -851,6 +959,9 @@ def main():
         "confirm": args.confirm,
         "force": args.force,
         "list_candidates": args.list_candidates,
+        "timeout": args.timeout,
+        "poll_interval": args.poll_interval,
+        "disappear": args.disappear,
     }
     
     # Filter out None values to let defaults apply

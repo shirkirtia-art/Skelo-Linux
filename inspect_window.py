@@ -268,9 +268,12 @@ def main():
     parser.add_argument("--title", default=None, help="Window title substring (case-insensitive)")
     parser.add_argument("--max-depth", type=int, default=30, help="Max tree depth to walk")
     parser.add_argument("--max-elements", type=int, default=5000, help="Safety cap on total nodes visited")
-    parser.add_argument("--format", choices=["flat", "tree"], default="flat",
+    parser.add_argument("--format", choices=["flat", "tree", "compact-json"], default="flat",
                          help="'flat' (default): pruned, reading-order list with region/path context. "
-                              "'tree': legacy full nested tree, every node included.")
+                              "'tree': legacy full nested tree, every node included. "
+                              "'compact-json': minimal JSON for LLM agents.")
+    parser.add_argument("--compact", "--agent-view", action="store_true", dest="compact",
+                         help="Output ultra-dense, token-saving 1-line-per-element format designed for LLM agents.")
     parser.add_argument("--interactive-only", action="store_true",
                          help="Flat mode only: keep just clickable/editable/focused/selected elements.")
     parser.add_argument("--max-value-len", type=int, default=300,
@@ -316,6 +319,46 @@ def main():
         )
         for idx, el in enumerate(elements, 1):
             el["id"] = f"el_{idx}"
+
+        if args.compact:
+            print(f"# Window: {app.get_name()} — '{win.get_name()}' ({len(elements)} elements)")
+            for el in elements:
+                states = []
+                if el.get("focused"): states.append("focused")
+                if el.get("selected"): states.append("selected")
+                if el.get("clickable"): states.append("clickable")
+                state_str = f" [{', '.join(states)}]" if states else ""
+                if el.get("click_target"):
+                    target_str = f"@ ({el['click_target']['x']}, {el['click_target']['y']})"
+                elif el.get("bounds"):
+                    b = el["bounds"]
+                    target_str = f"@ bounds ({b['x']},{b['y']},{b['width']},{b['height']})"
+                else:
+                    target_str = ""
+                lbl = el.get("label") or el.get("value") or "-"
+                clean_lbl = str(lbl).replace('"', '\\"')
+                if len(clean_lbl) > 60:
+                    clean_lbl = clean_lbl[:57] + "..."
+                print(f"[{el['id']}] {el['type']} \"{clean_lbl}\" {target_str}{state_str}".strip())
+            return
+
+        if args.format == "compact-json":
+            compact_elements = []
+            for el in elements:
+                states = []
+                if el.get("focused"): states.append("focused")
+                if el.get("selected"): states.append("selected")
+                if el.get("clickable"): states.append("clickable")
+                target = [el["click_target"]["x"], el["click_target"]["y"]] if el.get("click_target") else None
+                compact_elements.append({
+                    "id": el["id"],
+                    "type": el["type"],
+                    "label": el.get("label") or el.get("value"),
+                    "target": target,
+                    "states": states,
+                })
+            print(json.dumps(compact_elements, indent=2))
+            return
 
         if args.summary:
             print(f"\nWindow: {app.get_name()} — '{win.get_name()}'")

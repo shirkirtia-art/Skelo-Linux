@@ -81,8 +81,10 @@ ACTING (all forward to skelo_action.py)
   raise      --app <name> | --title <t>  Bring a window to the front
   close      --app <name> | --title <t>  Close a window
   alt-tab [--times N] [--reverse]        Cycle windows
-  sequence '<json>'                      Run a mixed action sequence
-  sequence --file <path.json>            Same, from a file
+  wait --app <name> [--label <l>] [--timeout 5] Wait for element/window to appear/disappear
+  batch '<json>'                         Run a compound action sequence in 1 turn
+  batch --file <path.json>               Same, from a file
+  sequence '<json>'                      Alias for batch
   run <raw args>                         Escape hatch: passed straight to skelo_action.py
 
   Safety: if you pass --app/--title to click/type/key/scroll/drag and that
@@ -91,6 +93,9 @@ ACTING (all forward to skelo_action.py)
   app. Fix by raising the target first (`skelo minimize`/`raise`), or
   target a click by --label (has a safe fallback), or add --force if
   you're certain it's safe.
+
+AGENT INTEGRATION
+  mcp                                    Launch native Model Context Protocol (MCP) server  -> skelo_mcp.py
 
 DIAGNOSTICS
   doctor                                 Check AT-SPI/wmctrl/xdotool/pyautogui/display health
@@ -184,9 +189,10 @@ case "$cmd" in
     close)       run_py skelo_action.py --action close_window "$@" ;;
     alt-tab)     run_py skelo_action.py --action alt_tab "$@" ;;
 
-    sequence)
+    wait)        run_py skelo_action.py --action wait "$@" ;;
+    batch|sequence)
         if [ $# -eq 0 ]; then
-            echo "Error: 'sequence' requires a JSON string or --file <path.json>" >&2
+            echo "Error: '$cmd' requires a JSON string or --file <path.json>" >&2
             exit 1
         elif [ "$1" = "--file" ]; then
             shift
@@ -195,6 +201,7 @@ case "$cmd" in
             run_py skelo_action.py --sequence "$@"
         fi
         ;;
+    mcp)         run_py skelo_mcp.py "$@" ;;
     run)         run_py skelo_action.py "$@" ;;
 
     doctor)      doctor ;;

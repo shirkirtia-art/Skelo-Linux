@@ -17,6 +17,7 @@ not a step in the agent workflow.
 
 import math
 import random
+import re
 import shutil
 import subprocess
 import sys
@@ -162,10 +163,15 @@ try:
         uid = os.getuid()
         if uid == 0:
             uid = 1000
-        bus_socket = f"/run/user/{uid}/at-spi/bus_0"
-        if os.path.exists(bus_socket):
-            os.environ["AT_SPI_BUS_ADDRESS"] = f"unix:path={bus_socket}"
-        else:
+        bus_candidates = [
+            f"/run/user/{uid}/at-spi/bus",
+            f"/run/user/{uid}/at-spi/bus_0",
+        ]
+        for b_sock in bus_candidates:
+            if os.path.exists(b_sock):
+                os.environ["AT_SPI_BUS_ADDRESS"] = f"unix:path={b_sock}"
+                break
+        if "AT_SPI_BUS_ADDRESS" not in os.environ:
             try:
                 home_dir = pwd.getpwuid(uid).pw_dir
                 cache_file = f"{home_dir}/.cache/at-spi/bus_0"
@@ -406,20 +412,43 @@ def infer_label_from_children(acc):
     return None
 
 
+def normalize_label(text):
+    """Normalize UI labels for resilient matching and clean agent display:
+    - Strips GTK mnemonic underlines (_File -> File, __ -> _)
+    - Strips trailing ellipsis (... or \u2026)
+    - Trims keyboard shortcut annotations like (Ctrl+S) or \tCtrl+O
+    - Strips leading/trailing whitespace
+    """
+    if not text:
+        return ""
+    s = str(text).strip()
+    # Strip tab-separated shortcuts e.g. "Save\tCtrl+S"
+    s = re.sub(r'\t.*$', '', s)
+    # Strip trailing hotkeys in parentheses or brackets e.g. (Ctrl+S), [Ctrl+Alt+T], (Ctrl+Shift+P)
+    s = re.sub(r'\s*[\(\[]\s*(?:(?:Ctrl|Alt|Shift|Super|Cmd|Meta)\s*[\+\-]\s*)+[A-Za-z0-9_\+\-]+\s*[\)\]]$', '', s, flags=re.IGNORECASE)
+    # Strip trailing ellipsis
+    s = re.sub(r'(\.\.\.|\u2026)$', '', s)
+    # GTK mnemonic underlines: double underscore is literal underscore, single is mnemonic
+    s = s.replace('__', '\x00')
+    s = s.replace('_', '')
+    s = s.replace('\x00', '_')
+    return s.strip()
+
+
 def resolve_label(acc, role):
     """Returns (label, inferred). inferred=True means the label was
     borrowed from description or a child, not the element's own name."""
-    label = acc.get_name() or None
-    if label:
-        return label, False
+    raw = acc.get_name() or None
+    if raw:
+        return normalize_label(raw), False
     if role not in CLICKABLE_ROLES:
         return None, False
-    label = get_description(acc)
-    if label:
-        return label, True
-    label = infer_label_from_children(acc)
-    if label:
-        return label, True
+    desc = get_description(acc)
+    if desc:
+        return normalize_label(desc), True
+    child_lbl = infer_label_from_children(acc)
+    if child_lbl:
+        return normalize_label(child_lbl), True
     return None, False
 
 

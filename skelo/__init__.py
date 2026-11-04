@@ -5,5 +5,6 @@ No screenshots. No pixel-guessing. Direct AT-SPI accessibility tree and X11 acce
 
 from .desktop import Desktop, Window, Element
 from .version import __version__
+from .mcp import SkeloMCPServer
 
-__all__ = ["Desktop", "Window", "Element", "__version__"]
+__all__ = ["Desktop", "Window", "Element", "SkeloMCPServer", "__version__"]

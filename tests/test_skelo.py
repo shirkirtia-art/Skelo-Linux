@@ -11,10 +11,10 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import skelo_common
 from skelo_common import (
     INVALID_COORD_THRESHOLD, get_bounds, is_meaningful_element,
-    _norm_win_id, classify_region
+    _norm_win_id, classify_region, normalize_label
 )
 from list_windows import _clean_x11_app_name, _window_matches
-from skelo_action import _is_ascii_simple
+from skelo_action import _is_ascii_simple, action_wait
 from skelo import Desktop, Window, Element
 
 
@@ -57,6 +57,14 @@ class TestSkeloCommon(unittest.TestCase):
         self.assertEqual(classify_region(center, win_bounds), "center")
         self.assertEqual(classify_region(bottom_right, win_bounds), "bottom-right")
 
+    def test_normalize_label(self):
+        self.assertEqual(normalize_label("_File"), "File")
+        self.assertEqual(normalize_label("_Open..."), "Open")
+        self.assertEqual(normalize_label("Save (Ctrl+S)"), "Save")
+        self.assertEqual(normalize_label("Export \tCtrl+E"), "Export")
+        self.assertEqual(normalize_label("__init__"), "_init_")
+        self.assertEqual(normalize_label(None), "")
+
 
 class TestListWindows(unittest.TestCase):
     def test_clean_x11_app_name(self):
@@ -90,6 +98,12 @@ class TestSkeloAction(unittest.TestCase):
         self.assertFalse(_is_ascii_simple("multiline\ntext"))
         self.assertFalse(_is_ascii_simple("unicode: café, résumé, 日本語, 🚀"))
 
+    def test_wait_timeout(self):
+        res = action_wait({"app": "nonexistent_app_xyz_999", "timeout": 0.1, "poll_interval": 0.05})
+        self.assertEqual(res["status"], "error")
+        self.assertEqual(res["action"], "wait")
+        self.assertIn("Timed out", res["error"])
+
 
 class TestDesktopSDK(unittest.TestCase):
     def test_desktop_instantiation(self):
@@ -109,6 +123,13 @@ class TestDesktopSDK(unittest.TestCase):
             self.assertTrue(hasattr(wins[0], "click"))
             self.assertTrue(hasattr(wins[0], "type"))
             self.assertTrue(hasattr(wins[0], "inspect"))
+            self.assertTrue(hasattr(wins[0], "wait_for"))
+
+    def test_desktop_batch(self):
+        d = Desktop()
+        res = d.batch([{"action": "sleep", "duration": 0.01}])
+        self.assertEqual(res["status"], "success")
+        self.assertEqual(res["actions_executed"], 1)
 
 
 if __name__ == "__main__":

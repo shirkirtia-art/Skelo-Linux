@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "skelo-linux"
-version = "1.0.0"
+version = "1.1.0"
 description = "Deterministic desktop automation for AI agents on Linux without screenshots or vision models."
 readme = "README.md"
 authors = [

@@ -165,13 +165,66 @@ chmod +x skelo.sh
 
 ```bash
 skelo windows                                   # what's open right now
+skelo inspect --app "nemo" --compact             # ultra-dense token-saving view for LLMs (85-90% less tokens)
 skelo inspect --app "nemo" --summary             # view clean terminal UI summary
 skelo open "Spotify"                             # launch an installed app
+skelo wait --app "Spotify" --label "Play"        # reactive smart wait (replaces sleep)
+skelo click --app "Spotify" --label "Play"       # click by live label lookup
+skelo batch '[{"action":"click","label":"Play"},{"action":"wait","label":"Pause"}]' # multi-action batch in 1 turn
+skelo mcp                                       # launch native Model Context Protocol (MCP) server
 skelo minimize --app "Chrome"                    # clear something out of the way
-skelo click --app "Spotify" --label "Pause"       # click by live label lookup
-skelo learn --app "OBS Studio"                    # map a new app safely
+skelo learn --app "OBS Studio"                   # map a new app safely
 skelo resolve --skill obs_studio --label "Settings" --click
 ```
+
+### Python SDK (`import skelo`)
+
+```python
+from skelo import Desktop
+
+desktop = Desktop()
+
+# List and manage windows
+for win in desktop.list_windows():
+    print(win.app_name, win.title)
+
+# Inspect with compact token-saver mode
+chrome = desktop.get_window(app="Chrome")
+if chrome:
+    elements = chrome.inspect(compact=True, interactive_only=True)
+    chrome.click(label="New tab")
+
+# Execute atomic multi-step batch
+desktop.batch([
+    {"action": "wait", "app": "Chrome", "label": "New tab", "timeout": 3.0},
+    {"action": "type", "text": "https://github.com", "press_enter": True}
+])
+```
+
+### Agent Integration: Native Model Context Protocol (MCP)
+
+Skelo provides a native, zero-dependency MCP server over stdio:
+
+```json
+{
+  "mcpServers": {
+    "skelo": {
+      "command": "skelo.sh",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+Exposes standard agent tools:
+* `skelo_list_windows`: View all open windows and coordinates
+* `skelo_inspect`: High-density UI control tree (`compact=True` default)
+* `skelo_click`: Click controls by label, role, ID, or coordinates
+* `skelo_type`: Type text with Unicode clipboard fallback
+* `skelo_hotkey`: Keyboard shortcuts (`ctrl+s`, `Return`, `alt+tab`)
+* `skelo_wait`: Event-driven state changes without static sleeps
+* `skelo_batch`: Compound macro execution in a single inference turn
+* `skelo_launch`: Application launcher with window wait
 
 Run `skelo help` for the full command reference.
 

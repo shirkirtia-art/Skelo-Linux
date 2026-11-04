@@ -21,7 +21,8 @@ from skelo_common import (
 )
 from skelo_action import (
     search_element, action_click, action_type, action_keypress,
-    action_scroll, action_drag, run_single_action, direct_action_click
+    action_scroll, action_drag, run_single_action, direct_action_click,
+    action_wait, run_sequence
 )
 
 
@@ -108,8 +109,11 @@ class Window:
         ok, err = window_manage(self.app_name, "close", title_query=self.title)
         return ok
 
-    def inspect(self, interactive_only=False, max_depth=30, max_elements=5000):
-        """Dump all labeled UI elements inside this window."""
+    def inspect(self, interactive_only=False, compact=False, max_depth=30, max_elements=5000):
+        """Dump UI elements inside this window.
+        If compact=True, returns ultra-dense token-saving representations:
+        [{"id": "el_1", "type": "button", "label": "OK", "target": [x, y], "states": [...]}, ...]
+        """
         win_acc = self._ensure_acc()
         if win_acc is None:
             return []
@@ -124,7 +128,21 @@ class Window:
         out = []
         for idx, el in enumerate(elements, 1):
             el["id"] = f"el_{idx}"
-            out.append(Element(el, window=self))
+            if compact:
+                states = []
+                if el.get("focused"): states.append("focused")
+                if el.get("selected"): states.append("selected")
+                if el.get("clickable"): states.append("clickable")
+                target = [el["click_target"]["x"], el["click_target"]["y"]] if el.get("click_target") else None
+                out.append({
+                    "id": el["id"],
+                    "type": el["type"],
+                    "label": el.get("label") or el.get("value"),
+                    "target": target,
+                    "states": states,
+                })
+            else:
+                out.append(Element(el, window=self))
         return out
 
     def find_element(self, label=None, role=None, element_id=None):
@@ -137,6 +155,19 @@ class Window:
             return None
         pick = candidates[0]
         return Element(pick["node"], window=self, acc=pick["acc"])
+
+    def wait_for(self, label=None, role=None, element_id=None, timeout=5.0, poll_interval=0.05, disappear=False):
+        """Poll AT-SPI tree until a matching element appears (or disappears), or return error."""
+        return action_wait({
+            "app": self.app_name,
+            "title": self.title,
+            "label": label,
+            "role": role,
+            "element_id": element_id,
+            "timeout": timeout,
+            "poll_interval": poll_interval,
+            "disappear": disappear,
+        })
 
     def wait_for_element(self, label=None, role=None, timeout=10.0, poll_interval=0.25):
         """Poll until a matching element appears in this window, or raise TimeoutError."""
@@ -262,3 +293,24 @@ class Desktop:
         if not ok:
             raise RuntimeError(f"Failed to launch '{target['name']}': {err}")
         return target
+
+    def batch(self, actions):
+        """Execute a compound sequence of actions in a single atomic call."""
+        if isinstance(actions, str):
+            import json
+            actions = json.loads(actions)
+        return run_sequence(actions)
+
+    def wait_for(self, app=None, title=None, label=None, role=None, element_id=None,
+                 timeout=5.0, poll_interval=0.05, disappear=False):
+        """Poll AT-SPI tree until a matching window or element appears/disappears."""
+        return action_wait({
+            "app": app,
+            "title": title,
+            "label": label,
+            "role": role,
+            "element_id": element_id,
+            "timeout": timeout,
+            "poll_interval": poll_interval,
+            "disappear": disappear,
+        })

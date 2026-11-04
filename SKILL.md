@@ -26,12 +26,16 @@ things you have to remember to run it.
 | `skelo.sh windows` | What's open right now |
 | `skelo.sh apps` | What's installed |
 | `skelo.sh open "<name>"` | Launch an installed app |
-| `skelo.sh inspect --app "<name>"` | Dump a window's UI elements |
+| `skelo.sh inspect --app "<name>" --compact` | Ultra-dense, token-saving UI dump for LLMs (85-90% less tokens) |
+| `skelo.sh inspect --app "<name>"` | Full structured JSON dump of a window's UI elements |
+| `skelo.sh wait --app "<name>" --label "<l>"` | Smart reactive wait for element/window (replaces sleep) |
+| `skelo.sh batch '[<actions>]'` | Run compound multi-step sequence in 1 LLM turn |
+| `skelo.sh mcp` | Launch native Model Context Protocol (MCP) server |
 | `skelo.sh learn --app "<name>"` | check→launch→map, one call (start here for a new app) |
 | `skelo.sh map --app "<name>"` | Map an already-open app directly |
 | `skelo.sh resolve --skill <f> --label "<l>" --click` | Replay a learned skill |
 | `skelo.sh click --app "<name>" --label "<l>"` | Click by live label lookup |
-| `skelo.sh type --text "..."` | Type text |
+| `skelo.sh type --text "..."` | Type text (clipboard fallback for unicode/emojis) |
 | `skelo.sh key --key "ctrl+shift+t"` | Hotkey (join keys with `+`) |
 | `skelo.sh minimize / maximize / raise / close --app "<name>"` | Manage a window directly |
 | `skelo.sh alt-tab [--times N]` | Cycle windows |
